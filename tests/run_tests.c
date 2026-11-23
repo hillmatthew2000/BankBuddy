@@ -1,9 +1,38 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "check.h"
 
 int check_failures = 0;
 int check_count = 0;
+
+const char *test_temp_dir(void) {
+    const char *names[] = {"TMPDIR", "TEMP", "TMP"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        const char *dir = getenv(names[i]);
+        if (dir && *dir)
+            return dir;
+    }
+    return ".";
+}
+
+void test_temp_path(char *buf, size_t size, const char *name) {
+    snprintf(buf, size, "%s/bankbuddy-test-%s", test_temp_dir(), name);
+}
+
+FILE *test_input(const char *text) {
+    char path[512];
+    test_temp_path(path, sizeof path, "input.txt");
+    FILE *f = fopen(path, "wb");
+    if (!f)
+        return NULL;
+    fwrite(text, 1, strlen(text), f);
+    fclose(f);
+    f = fopen(path, "rb");
+    remove(path); /* POSIX keeps the open file; Windows refuses, so it is reused next time */
+    return f;
+}
 
 void check_fail(const char *file, int line, const char *msg) {
     check_failures++;

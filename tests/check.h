@@ -40,6 +40,12 @@ void check_fail_int(const char *file, int line, const char *expr, long long actu
         }                                                                                     \
     } while (0)
 
+/* Scratch files live in $TMPDIR/$TEMP (or the current directory if neither is set). */
+const char *test_temp_dir(void);
+void test_temp_path(char *buf, size_t size, const char *name);
+/* A readable stream holding exactly `text` (binary mode, so CRLF is preserved). */
+FILE *test_input(const char *text);
+
 /* Each test file exposes one suite function, listed in run_tests.c. */
 void suite_validation(void);
 void suite_auth(void);
