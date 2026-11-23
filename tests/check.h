@@ -44,5 +44,7 @@ void check_fail_int(const char *file, int line, const char *expr, long long actu
 void suite_validation(void);
 void suite_auth(void);
 void suite_report(void);
+void suite_money(void);
+void suite_account(void);
 
 #endif /* CHECK_H */

@@ -30,18 +30,6 @@ void trim(char *s) {
         s[--len] = '\0';
 }
 
-int parse_double(const char *s, double *out) {
-    if (!s || !out)
-        return 0;
-    char *end = NULL;
-    errno = 0;
-    double v = strtod(s, &end);
-    if (errno != 0 || end == s || *end != '\0')
-        return 0;
-    *out = v;
-    return 1;
-}
-
 int parse_ulong(const char *s, unsigned long *out) {
     if (!s || !out)
         return 0;

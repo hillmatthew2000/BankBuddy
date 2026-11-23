@@ -4,7 +4,6 @@
 #include <stddef.h>
 
 int read_line(char *buf, size_t max);
-int parse_double(const char *s, double *out);
 int parse_ulong(const char *s, unsigned long *out);
 void trim(char *s);
 void sanitize_category(char *cat);

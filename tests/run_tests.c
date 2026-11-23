@@ -38,9 +38,8 @@ typedef struct Suite {
 } Suite;
 
 static const Suite suites[] = {
-    {"validation", suite_validation},
-    {"auth", suite_auth},
-    {"report", suite_report},
+    {"validation", suite_validation}, {"auth", suite_auth},       {"report", suite_report},
+    {"money", suite_money},           {"account", suite_account},
 };
 
 int main(void) {

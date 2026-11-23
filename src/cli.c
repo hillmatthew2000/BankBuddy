@@ -28,7 +28,7 @@ static void create_account_flow(AccountList *list) {
         return;
     }
     unsigned int h = hash_pin(pin);
-    Account *acc = account_create(list, user, h, 0.0);
+    Account *acc = account_create(list, user, h, time(NULL));
     if (!acc) {
         printf("Failed to create account.\n");
         return;
@@ -69,93 +69,136 @@ static Account *login_flow(AccountList *list) {
 }
 
 static void show_transactions(const Account *acc) {
-    printf("ID   Type  Amount      BalanceAfter   Time                Category\n");
-    printf("-----------------------------------------------------------------------\n");
+    printf("%-5s %-4s %16s %16s  %-16s  %s\n", "ID", "Type", "Amount", "Balance", "Time",
+           "Category");
+    printf("--------------------------------------------------------------------------------\n");
     for (const Transaction *tx = acc->tx_head; tx; tx = tx->next) {
-        char buf[32];
-        struct tm *tmv = localtime(&tx->timestamp);
-        strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", tmv);
-        printf("%-4lu %-5c %10.2f %14.2f %s %-s\n", tx->tx_id, tx->type, tx->amount,
-               tx->balance_after, buf, tx->category);
+        char when[32] = "?";
+        const struct tm *tmv = localtime(&tx->timestamp);
+        if (tmv)
+            strftime(when, sizeof when, "%Y-%m-%d %H:%M", tmv);
+        char amount[MONEY_STR_MAX], balance[MONEY_STR_MAX];
+        money_format(tx->amount, amount, sizeof amount);
+        money_format(tx->balance_after, balance, sizeof balance);
+        printf("%-5lu %-4c %16s %16s  %-16s  %s\n", tx->tx_id, (char)tx->type, amount, balance,
+               when, tx->category);
     }
+}
+
+/* Prompts for an amount; prints the reason and returns 0 if it is unusable. */
+static int prompt_amount(const char *prompt, Money *out) {
+    char buf[64];
+    printf("%s", prompt);
+    if (!read_line(buf, sizeof buf))
+        return 0;
+    trim(buf);
+    BbStatus rc = money_parse(buf, out);
+    if (rc == BB_ERR_RANGE || (rc == BB_OK && *out == 0)) {
+        char max[MONEY_STR_MAX];
+        money_format(MONEY_MAX, max, sizeof max);
+        printf("Amount must be between 0.01 and %s.\n", max);
+        return 0;
+    }
+    if (rc != BB_OK) {
+        printf("Invalid amount. Use digits with up to two decimals, e.g. 25 or 1,250.50.\n");
+        return 0;
+    }
+    return 1;
+}
+
+static int prompt_category(char *cat, size_t size) {
+    printf("Category: ");
+    if (!read_line(cat, size))
+        return 0;
+    sanitize_category(cat);
+    return 1;
+}
+
+static void print_result(const char *verb, Money amount, const Account *acc) {
+    char amt[MONEY_STR_MAX], bal[MONEY_STR_MAX];
+    money_format(amount, amt, sizeof amt);
+    money_format(acc->balance, bal, sizeof bal);
+    printf("%s %s. New balance: %s\n", verb, amt, bal);
 }
 
 static void deposit_flow(Account *acc) {
-    char buf[64];
+    Money amount;
     char cat[CATEGORY_MAX + 2];
-    printf("Amount to deposit: ");
-    if (!read_line(buf, sizeof buf))
+    if (!prompt_amount("Amount to deposit: ", &amount) || !prompt_category(cat, sizeof cat))
         return;
-    double amt;
-    if (!parse_double(buf, &amt) || amt <= 0) {
-        printf("Invalid amount.\n");
-        return;
-    }
-    printf("Category: ");
-    if (!read_line(cat, sizeof cat))
-        return;
-    sanitize_category(cat);
-    acc->balance += amt;
-    account_record_transaction(acc, 'D', amt, cat, acc->balance);
-    printf("Deposited %.2f. New balance: %.2f\n", amt, acc->balance);
+    BbStatus rc = account_deposit(acc, amount, cat, time(NULL));
+    if (rc == BB_ERR_RANGE)
+        printf("Deposit refused: the balance would exceed the account limit.\n");
+    else if (rc != BB_OK)
+        printf("Deposit failed: %s.\n", bb_status_message(rc));
+    else
+        print_result("Deposited", amount, acc);
 }
 
 static void withdraw_flow(Account *acc) {
-    char buf[64];
+    Money amount;
     char cat[CATEGORY_MAX + 2];
-    printf("Amount to withdraw: ");
-    if (!read_line(buf, sizeof buf))
+    if (!prompt_amount("Amount to withdraw: ", &amount))
         return;
-    double amt;
-    if (!parse_double(buf, &amt) || amt <= 0) {
-        printf("Invalid amount.\n");
-        return;
-    }
-    if (amt > acc->balance) {
+    if (amount > acc->balance) {
         printf("Insufficient funds.\n");
         return;
     }
-    printf("Category: ");
-    if (!read_line(cat, sizeof cat))
+    if (!prompt_category(cat, sizeof cat))
         return;
-    sanitize_category(cat);
-    acc->balance -= amt;
-    account_record_transaction(acc, 'W', amt, cat, acc->balance);
-    printf("Withdrew %.2f. New balance: %.2f\n", amt, acc->balance);
+    BbStatus rc = account_withdraw(acc, amount, cat, time(NULL));
+    if (rc != BB_OK)
+        printf("Withdrawal failed: %s.\n", bb_status_message(rc));
+    else
+        print_result("Withdrew", amount, acc);
 }
 
 static void interest_flow(Account *acc) {
     char buf[64];
-    printf("Annual rate (e.g., 0.05 for 5%%): ");
+    printf("Annual rate in percent (e.g. 5 or 4.75): ");
     if (!read_line(buf, sizeof buf))
         return;
-    double rate;
-    if (!parse_double(buf, &rate) || rate < 0) {
-        printf("Invalid rate.\n");
+    trim(buf);
+    int rate_bp;
+    if (interest_parse_rate(buf, &rate_bp) != BB_OK) {
+        printf("Invalid rate. Enter a percentage from 0 to 100 with up to two decimals.\n");
         return;
     }
-    printf("Periods per year (e.g., 12): ");
+    printf("Periods per year (1-%d, e.g. 12 for monthly): ", INTEREST_MAX_PERIODS);
     if (!read_line(buf, sizeof buf))
         return;
-    double periods_d;
-    if (!parse_double(buf, &periods_d) || periods_d <= 0) {
-        printf("Invalid periods.\n");
+    trim(buf);
+    unsigned long periods;
+    if (!parse_ulong(buf, &periods) || periods == 0 || periods > INTEREST_MAX_PERIODS) {
+        printf("Invalid number of periods.\n");
         return;
     }
-    unsigned int periods = (unsigned int)periods_d;
-    apply_interest(acc, rate, periods, time(NULL));
-    printf("Interest applied. New balance: %.2f\n", acc->balance);
+    Money credited;
+    BbStatus rc = apply_interest(acc, rate_bp, (unsigned)periods, time(NULL), &credited);
+    if (rc != BB_OK)
+        printf("Interest not applied: %s.\n", bb_status_message(rc));
+    else if (credited == 0)
+        printf("No interest earned for this period.\n");
+    else
+        print_result("Credited interest of", credited, acc);
 }
 
 static void report_flow(const Account *acc) {
-    CategorySummary *head = generate_category_report(acc, 0, 0);
+    BbStatus rc;
+    CategorySummary *head = generate_category_report(acc, 0, 0, &rc);
+    if (rc != BB_OK) {
+        printf("Could not build the report: %s.\n", bb_status_message(rc));
+        return;
+    }
     print_category_report(head);
     free_category_summaries(head);
 }
 
 static void account_menu(Account *acc) {
     for (;;) {
-        printf("\nAccount %lu - Balance: %.2f\n", acc->account_number, acc->balance);
+        char balance[MONEY_STR_MAX];
+        money_format(acc->balance, balance, sizeof balance);
+        printf("\nAccount %lu - Balance: %s\n", acc->account_number, balance);
         printf("1) Deposit\n2) Withdraw\n3) Transactions\n4) Apply Interest\n5) Category "
                "Report\n6) Logout\nChoice: ");
         char choice[8];

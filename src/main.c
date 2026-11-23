@@ -9,11 +9,10 @@
 static void seed_demo(AccountList *list) {
     if (list->head)
         return; /* already have data */
-    unsigned int pin_hash = hash_pin("1234");
-    Account *demo = account_create(list, "demo", pin_hash, 500.0);
-    if (demo) {
-        account_record_transaction(demo, 'D', 500.0, "Seed", demo->balance);
-    }
+    time_t now = time(NULL);
+    Account *demo = account_create(list, "demo", hash_pin("1234"), now);
+    if (demo)
+        account_deposit(demo, 50000, "Seed", now);
 }
 
 int main(void) {
