@@ -10,7 +10,6 @@
 #include "interest.h"
 #include "report.h"
 
-static void press_enter() { printf("Press Enter to continue...\n"); getchar(); }
 
 static void create_account_flow(AccountList *list) {
     char user[USERNAME_MAX+2];

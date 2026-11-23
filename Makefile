@@ -1,46 +1,66 @@
-# Simple cross-platform Makefile for BankBuddy
+# BankBuddy build
+#
+#   make              build build/bankbuddy
+#   make test         build and run the test suite
+#   make run          build and start the app (data in the current directory)
+#   make clean        remove all build output
+#
+# Useful variables:
+#   CC=clang          choose the compiler (defaults to gcc)
+#   CFLAGS=...        optimisation/debug flags (default: -O2 -g)
+#   WERROR=1          treat warnings as errors (used by CI)
+#   SANITIZE=1        build with AddressSanitizer + UBSan (gcc/clang on Linux/macOS)
 
-CC ?= gcc
-CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wvla -O2
-INC = -Iinclude
-SRC_DIR = src
-OBJ_DIR = build
-BIN = bankbuddy
-
-# Sources (exclude gui backends if not present yet)
-SRCS = $(wildcard $(SRC_DIR)/*.c)
-OBJS = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
-
-# Optional flags
-ifeq ($(OS),Windows_NT)
-  LDLIBS = 
-  RM = del /Q
-  MKDIR_P = mkdir
-else
-  LDLIBS = -lm
-  RM = rm -f
-  MKDIR_P = mkdir -p
+ifeq ($(origin CC),default)
+CC := gcc
 endif
 
-.PHONY: all clean run debug
+CFLAGS ?= -O2 -g
+
+WARNINGS := -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wvla -Wformat=2 \
+            -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition \
+            -Wpointer-arith -Wcast-qual -Wundef
+
+ALL_CPPFLAGS := -Iinclude -MMD -MP $(CPPFLAGS)
+ALL_CFLAGS := -std=c11 $(WARNINGS) $(CFLAGS)
+
+ifeq ($(WERROR),1)
+ALL_CFLAGS += -Werror
+endif
+
+ifeq ($(SANITIZE),1)
+ALL_CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
+LDFLAGS += -fsanitize=address,undefined
+endif
+
+ifeq ($(OS),Windows_NT)
+EXE := .exe
+endif
+
+BUILD := build
+OBJDIR := $(BUILD)/obj
+BIN := $(BUILD)/bankbuddy$(EXE)
+
+SRCS := $(wildcard src/*.c)
+OBJS := $(SRCS:src/%.c=$(OBJDIR)/%.o)
+
+.PHONY: all run clean
 
 all: $(BIN)
 
-$(BIN): $(OBJ_DIR) $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDLIBS)
+$(BIN): $(OBJS)
+	$(CC) $(ALL_CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
-$(OBJ_DIR):
-	$(MKDIR_P) $(OBJ_DIR)
+$(OBJDIR)/%.o: src/%.c | $(OBJDIR)
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) $(INC) -c $< -o $@
+$(OBJDIR):
+	mkdir -p $@
 
 run: $(BIN)
 	./$(BIN)
 
 clean:
-	-$(RM) $(BIN)
-	-$(RM) $(OBJ_DIR)/*
+	rm -rf $(BUILD)
 
-# For future GUI flags:
-# make GUI=ncurses  (add detection logic later)
+-include $(OBJS:.o=.d)
