@@ -41,20 +41,34 @@ BUILD := build
 OBJDIR := $(BUILD)/obj
 BIN := $(BUILD)/bankbuddy$(EXE)
 
+TEST_BIN := $(BUILD)/run_tests$(EXE)
+
 SRCS := $(wildcard src/*.c)
 OBJS := $(SRCS:src/%.c=$(OBJDIR)/%.o)
+LIB_OBJS := $(filter-out $(OBJDIR)/main.o,$(OBJS))
+TEST_SRCS := $(wildcard tests/*.c)
+TEST_OBJS := $(TEST_SRCS:tests/%.c=$(OBJDIR)/tests/%.o)
 
-.PHONY: all run clean
+.PHONY: all test run clean
 
 all: $(BIN)
 
 $(BIN): $(OBJS)
 	$(CC) $(ALL_CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
+$(TEST_BIN): $(TEST_OBJS) $(LIB_OBJS)
+	$(CC) $(ALL_CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+test: $(TEST_BIN)
+	./$(TEST_BIN)
+
 $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
 	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
 
-$(OBJDIR):
+$(OBJDIR)/tests/%.o: tests/%.c | $(OBJDIR)/tests
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
+
+$(OBJDIR) $(OBJDIR)/tests:
 	mkdir -p $@
 
 run: $(BIN)
@@ -63,4 +77,4 @@ run: $(BIN)
 clean:
 	rm -rf $(BUILD)
 
--include $(OBJS:.o=.d)
+-include $(OBJS:.o=.d) $(TEST_OBJS:.o=.d)
