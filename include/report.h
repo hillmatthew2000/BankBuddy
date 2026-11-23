@@ -1,8 +1,9 @@
 #ifndef REPORT_H
 #define REPORT_H
 
-#include "account.h"
 #include <time.h>
+
+#include "account.h"
 
 typedef struct CategorySummary {
     char category[CATEGORY_MAX + 1];

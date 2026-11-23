@@ -1,15 +1,18 @@
+#include "report.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "report.h"
 
 static CategorySummary *find_or_add(CategorySummary **head, const char *category) {
     for (CategorySummary *c = *head; c; c = c->next) {
-        if (strcmp(c->category, category) == 0) return c;
+        if (strcmp(c->category, category) == 0)
+            return c;
     }
-    CategorySummary *ns = (CategorySummary*)calloc(1, sizeof(CategorySummary));
-    if (!ns) return NULL;
+    CategorySummary *ns = (CategorySummary *)calloc(1, sizeof(CategorySummary));
+    if (!ns)
+        return NULL;
     strncpy(ns->category, category, CATEGORY_MAX);
     ns->category[CATEGORY_MAX] = '\0';
     ns->next = *head;
@@ -18,15 +21,21 @@ static CategorySummary *find_or_add(CategorySummary **head, const char *category
 }
 
 CategorySummary *generate_category_report(const Account *acc, time_t start_time, time_t end_time) {
-    if (!acc) return NULL;
+    if (!acc)
+        return NULL;
     CategorySummary *head = NULL;
     for (const Transaction *tx = acc->tx_head; tx; tx = tx->next) {
-        if (start_time && tx->timestamp < start_time) continue;
-        if (end_time && tx->timestamp > end_time) continue;
+        if (start_time && tx->timestamp < start_time)
+            continue;
+        if (end_time && tx->timestamp > end_time)
+            continue;
         CategorySummary *cat = find_or_add(&head, tx->category);
-        if (!cat) break;
-        if (tx->type == 'D' || tx->type == 'I') cat->deposits += tx->amount;
-        else if (tx->type == 'W') cat->withdrawals += tx->amount;
+        if (!cat)
+            break;
+        if (tx->type == 'D' || tx->type == 'I')
+            cat->deposits += tx->amount;
+        else if (tx->type == 'W')
+            cat->withdrawals += tx->amount;
     }
     return head;
 }

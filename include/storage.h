@@ -3,7 +3,7 @@
 
 #include "account.h"
 
-#define ACCOUNTS_FILE "accounts.db"
+#define ACCOUNTS_FILE     "accounts.db"
 #define TRANSACTIONS_FILE "transactions.db"
 
 int load_data(AccountList *list);

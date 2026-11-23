@@ -1,24 +1,30 @@
+#include "account.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "account.h"
+
 #include "validation.h"
 
 void account_list_init(AccountList *list) {
-    if (!list) return;
+    if (!list)
+        return;
     list->head = NULL;
     list->next_account_number = 100000; /* start range */
 }
 
 static Account *allocate_account(void) {
-    Account *acc = (Account*)calloc(1, sizeof(Account));
+    Account *acc = (Account *)calloc(1, sizeof(Account));
     return acc;
 }
 
-Account *account_create(AccountList *list, const char *username, unsigned int pin_hash, double initial_balance) {
-    if (!list || !username) return NULL;
+Account *account_create(AccountList *list, const char *username, unsigned int pin_hash,
+                        double initial_balance) {
+    if (!list || !username)
+        return NULL;
     Account *acc = allocate_account();
-    if (!acc) return NULL;
+    if (!acc)
+        return NULL;
     acc->account_number = ++list->next_account_number;
     strncpy(acc->username, username, USERNAME_MAX);
     acc->username[USERNAME_MAX] = '\0';
@@ -34,9 +40,11 @@ Account *account_create(AccountList *list, const char *username, unsigned int pi
 }
 
 Account *account_find(AccountList *list, unsigned long account_number) {
-    if (!list) return NULL;
+    if (!list)
+        return NULL;
     for (Account *cur = list->head; cur; cur = cur->next) {
-        if (cur->account_number == account_number) return cur;
+        if (cur->account_number == account_number)
+            return cur;
     }
     return NULL;
 }
@@ -44,15 +52,19 @@ Account *account_find(AccountList *list, unsigned long account_number) {
 unsigned long account_next_tx_id(const Account *acc) {
     unsigned long max_id = 0;
     for (const Transaction *t = acc ? acc->tx_head : NULL; t; t = t->next) {
-        if (t->tx_id > max_id) max_id = t->tx_id;
+        if (t->tx_id > max_id)
+            max_id = t->tx_id;
     }
     return max_id + 1;
 }
 
-int account_record_transaction(Account *acc, char type, double amount, const char *category, double new_balance) {
-    if (!acc) return -1;
-    Transaction *tx = (Transaction*)calloc(1, sizeof(Transaction));
-    if (!tx) return -1;
+int account_record_transaction(Account *acc, char type, double amount, const char *category,
+                               double new_balance) {
+    if (!acc)
+        return -1;
+    Transaction *tx = (Transaction *)calloc(1, sizeof(Transaction));
+    if (!tx)
+        return -1;
     tx->tx_id = account_next_tx_id(acc);
     tx->amount = amount;
     tx->type = type;
@@ -71,7 +83,8 @@ int account_record_transaction(Account *acc, char type, double amount, const cha
 }
 
 void account_free_all(AccountList *list) {
-    if (!list) return;
+    if (!list)
+        return;
     Account *cur = list->head;
     while (cur) {
         Transaction *t = cur->tx_head;

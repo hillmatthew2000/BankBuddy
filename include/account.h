@@ -1,8 +1,8 @@
 #ifndef ACCOUNT_H
 #define ACCOUNT_H
 
-#include <time.h>
 #include <stddef.h>
+#include <time.h>
 
 #define USERNAME_MAX 63
 #define CATEGORY_MAX 31
@@ -36,12 +36,14 @@ typedef struct AccountList {
 } AccountList;
 
 void account_list_init(AccountList *list);
-Account *account_create(AccountList *list, const char *username, unsigned int pin_hash, double initial_balance);
+Account *account_create(AccountList *list, const char *username, unsigned int pin_hash,
+                        double initial_balance);
 Account *account_find(AccountList *list, unsigned long account_number);
 void account_free_all(AccountList *list);
 
 /* Transaction operations */
-int account_record_transaction(Account *acc, char type, double amount, const char *category, double new_balance);
+int account_record_transaction(Account *acc, char type, double amount, const char *category,
+                               double new_balance);
 unsigned long account_next_tx_id(const Account *acc);
 
 #endif /* ACCOUNT_H */
