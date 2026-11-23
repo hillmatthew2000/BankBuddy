@@ -57,7 +57,7 @@ This application benefits **students, educators, and developers** learning finan
 - **🔐 Secure PIN Authentication** – FNV-1a hashing with lockout protection (educational implementation)
 - **💰 Transaction Operations** – Deposit, withdraw, and balance management with real-time updates
 - **📊 Categorized Transaction History** – Organize transactions by custom categories for better tracking
-- **📁 File-Based Persistence** – Automatic data storage in `accounts.db` and `transactions.db`
+- **📁 File-Based Persistence** – Every change is saved immediately to one versioned `bankbuddy.db` file with atomic writes (data from older releases is converted automatically)
 - **💹 Interest Calculation** – Configurable simple interest application with flexible periods
 - **📈 Category Reporting** – Generate summary reports showing totals by transaction category
 - **🖥️ Interactive CLI** – Menu-driven console interface with input validation
@@ -94,8 +94,7 @@ BankBuddy/
 ├── Makefile                   # Build configuration and targets
 ├── README.md                  # Project documentation
 ├── LICENSE                    # MIT license file
-├── accounts.db               # Account data (auto-generated)
-└── transactions.db           # Transaction history (auto-generated)
+└── bankbuddy.db              # Account and transaction data (auto-generated)
 ```
 
 This structure implements **clean architecture principles** with clear separation between **data models**, **business logic**, **user interface**, and **data persistence**, making the project educational and maintainable.
@@ -126,8 +125,7 @@ graph TB
         FileIO[📁 File I/O Operations]:::dataColor
     end
     subgraph "🗄️ Storage Layer"
-        AccountsDB[(📄 accounts.db)]:::storageColor
-        TransactionsDB[(📄 transactions.db)]:::storageColor
+        AccountsDB[(📄 bankbuddy.db)]:::storageColor
     end
     
     CLI --> Menu
@@ -144,7 +142,6 @@ graph TB
     AccountModel --> FileIO
     TransactionModel --> FileIO
     FileIO --> AccountsDB
-    FileIO --> TransactionsDB
     
     classDef uiColor fill:#74b9ff,stroke:#0984e3,stroke-width:2px,color:#fff
     classDef appColor fill:#00cec9,stroke:#00b894,stroke-width:2px,color:#fff
@@ -250,8 +247,8 @@ cd BankBuddy
 make
 
 # Run the application
-./bankbuddy        # Linux/macOS
-bankbuddy.exe      # Windows
+./build/bankbuddy        # Linux/macOS
+build\bankbuddy.exe      # Windows
 
 # Or build and run in one command
 make run
@@ -275,21 +272,21 @@ gcc src/*.c -Iinclude -o bankbuddy.exe && bankbuddy.exe
 
 # Using MSYS2
 pacman -S gcc make
-make && ./bankbuddy.exe
+make && ./build/bankbuddy.exe
 ```
 
 **Linux/Ubuntu:**
 ```bash
 # Install build tools if needed
 sudo apt install build-essential
-make && ./bankbuddy
+make && ./build/bankbuddy
 ```
 
 **macOS:**
 ```bash
 # Install Xcode command line tools if needed
 xcode-select --install
-make && ./bankbuddy
+make && ./build/bankbuddy
 ```
 
 ---
@@ -299,21 +296,21 @@ make && ./bankbuddy
 Launch the application from your terminal:
 
 ```bash
-./bankbuddy        # Linux/macOS
-bankbuddy.exe      # Windows
+./build/bankbuddy                     # Linux/macOS
+build\bankbuddy.exe                   # Windows
+./build/bankbuddy --data-dir ~/bank   # keep data somewhere else
 ```
 
 You'll be greeted with an **interactive console menu** featuring:
 - 🎨 **Clear menu navigation** with numbered options
 - ⚡ **Real-time input validation** and error handling
 - 🔄 **Seamless workflow** between account operations
-- 💾 **Automatic data persistence** with manual save option
+- 💾 **Automatic saving** after every change
 
 ### 🎮 Main Menu Options
 1. **Create Account** - Register new bank account with username and PIN
 2. **Login** - Access existing account with account number and PIN
-3. **Save** - Manually save all data to files
-4. **Exit** - Save data and close application
+3. **Exit** - Close the application (everything is already saved)
 
 ### 💰 Account Operations
 1. **Deposit** - Add money with category tracking
@@ -332,8 +329,7 @@ You'll be greeted with an **interactive console menu** featuring:
 ==== BankBuddy ====
 1) Create Account
 2) Login
-3) Save
-4) Exit
+3) Exit
 Choice: 1
 Enter username: sarah_doe
 Enter PIN (4-8 digits): 5678
@@ -345,8 +341,7 @@ Account created. Number: 100002
 ==== BankBuddy ====
 1) Create Account
 2) Login
-3) Save
-4) Exit
+3) Exit
 Choice: 2
 Enter account number: 100001
 Enter PIN: 1234
@@ -432,8 +427,10 @@ Account locked. Try later.
 ### 📁 Data Files
 BankBuddy uses **plain text files** for transparent, educational data storage:
 
-- **`accounts.db`** - Account metadata (auto-created on first run)
-- **`transactions.db`** - Complete transaction history
+- **`bankbuddy.db`** - All accounts and their transaction history, created on first run in the data directory (the current directory, or the one given with `--data-dir`)
+- The first line is a version header (`BANKBUDDY 2`); each `A|...` account line is followed by its `T|...` transactions, newest first. Amounts are stored as exact decimals and held in memory as integer cents
+- Saves go to a temporary file that is then renamed over `bankbuddy.db`, so an interrupted save never leaves a half-written file
+- Data from older releases (`accounts.db` + `transactions.db`) is converted on first start; the old files are left in place and can be deleted afterwards
 
 ### 🔧 Security Configuration
 Current security settings (defined in `include/auth.h`):
@@ -534,10 +531,10 @@ CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wvla -O2
 - ✅ Check that all header files exist in `include/` directory
 - ✅ Try clean build: `make clean && make`
 
-**`accounts.db` or `transactions.db` corruption**
-- ✅ Delete corrupted files - they will be recreated automatically
-- ✅ Demo account will be re-seeded on next startup
-- ⚠️ **Note**: This will delete all existing account data
+**`bankbuddy.db` is reported as damaged**
+- ✅ BankBuddy refuses to start rather than overwrite a damaged file, and names the bad line
+- ✅ Repair that line, or move the file away to start fresh (the demo account is re-seeded)
+- ⚠️ **Note**: Starting fresh discards all existing account data
 
 **Account lockout issues**
 - ⏰ **Wait 60 seconds** after failed login attempts
@@ -551,7 +548,7 @@ CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wvla -O2
 
 **Segmentation faults or crashes**
 - 🧹 Try `make clean && make` for a fresh build
-- 🔍 Run with debugger: `gdb ./bankbuddy`
+- 🔍 Run with debugger: `gdb ./build/bankbuddy`
 - 📊 Check system memory and disk space
 
 ---

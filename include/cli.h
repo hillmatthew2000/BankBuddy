@@ -3,6 +3,9 @@
 
 #include "account.h"
 
-void main_menu(AccountList *list);
+/* Runs the interactive menus until the user exits or input ends. Changes are saved to
+ * data_dir
+ * as they happen. */
+void main_menu(AccountList *list, const char *data_dir);
 
 #endif /* CLI_H */

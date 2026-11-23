@@ -18,6 +18,10 @@ const char *bb_status_message(BbStatus status) {
             return "Out of memory";
         case BB_ERR_IO:
             return "Could not read or write the data file";
+        case BB_ERR_CORRUPT:
+            return "The data file is damaged";
+        case BB_ERR_VERSION:
+            return "The data file was written by a newer version of BankBuddy";
     }
     return "Unknown error";
 }

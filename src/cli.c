@@ -47,10 +47,15 @@ static int menu_choice(int options) {
     return -1;
 }
 
-static int save_or_warn(const AccountList *list) {
-    if (save_data(list) == 0)
+/* The data being worked on; every change is saved straight away. */
+static AccountList *session_list;
+static const char *session_dir;
+
+static int save_or_warn(void) {
+    BbStatus rc = storage_save(session_dir, session_list);
+    if (rc == BB_OK)
         return 1;
-    printf("Warning: could not save your data.\n");
+    printf("Warning: could not save your data (%s).\n", bb_status_message(rc));
     return 0;
 }
 
@@ -79,6 +84,7 @@ static void create_account_flow(AccountList *list) {
         printf("Failed to create account.\n");
         return;
     }
+    save_or_warn();
     printf("Account created. Number: %lu\n", acc->account_number);
 }
 
@@ -104,7 +110,9 @@ static Account *login_flow(AccountList *list) {
     }
     if (!prompt("Enter PIN: ", pin, sizeof pin))
         return NULL;
-    if (verify_pin(acc, pin, now)) {
+    int ok = verify_pin(acc, pin, now);
+    save_or_warn(); /* the attempt counter and lockout must survive a restart */
+    if (ok) {
         printf("Login successful. Welcome %s!\n", acc->username);
         return acc;
     }
@@ -172,7 +180,7 @@ static void deposit_flow(Account *acc) {
         printf("Deposit refused: the balance would exceed the account limit.\n");
     else if (rc != BB_OK)
         printf("Deposit failed: %s.\n", bb_status_message(rc));
-    else
+    else if (save_or_warn())
         print_result("Deposited", amount, acc);
 }
 
@@ -190,7 +198,7 @@ static void withdraw_flow(Account *acc) {
     BbStatus rc = account_withdraw(acc, amount, cat, time(NULL));
     if (rc != BB_OK)
         printf("Withdrawal failed: %s.\n", bb_status_message(rc));
-    else
+    else if (save_or_warn())
         print_result("Withdrew", amount, acc);
 }
 
@@ -219,7 +227,7 @@ static void interest_flow(Account *acc) {
         printf("Interest not applied: %s.\n", bb_status_message(rc));
     else if (credited == 0)
         printf("No interest earned for this period.\n");
-    else
+    else if (save_or_warn())
         print_result("Credited interest of", credited, acc);
 }
 
@@ -267,13 +275,14 @@ static void account_menu(Account *acc) {
     }
 }
 
-void main_menu(AccountList *list) {
+void main_menu(AccountList *list, const char *data_dir) {
+    session_list = list;
+    session_dir = data_dir;
     for (;;) {
         printf("\n==== BankBuddy ====\n");
-        printf("1) Create Account\n2) Login\n3) Save\n4) Exit\n");
-        switch (menu_choice(4)) {
+        printf("1) Create Account\n2) Login\n3) Exit\n");
+        switch (menu_choice(3)) {
             case 0:
-                save_or_warn(list);
                 return;
             case '1':
                 create_account_flow(list);
@@ -284,11 +293,6 @@ void main_menu(AccountList *list) {
                     account_menu(acc);
             } break;
             case '3':
-                if (save_or_warn(list))
-                    printf("Saved.\n");
-                break;
-            case '4':
-                save_or_warn(list);
                 printf("Goodbye.\n");
                 return;
             default:
