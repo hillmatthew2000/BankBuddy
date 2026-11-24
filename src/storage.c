@@ -6,11 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "auth.h"
 #include "platform.h"
 
 #define LINE_MAX_LEN 1024
 #define HEADER_MAGIC "BANKBUDDY"
-#define CRED_FNV1A   "fnv1a:"
 #define TEMP_SUFFIX  ".tmp"
 #define PATH_MAX_LEN 1024
 
@@ -134,32 +134,41 @@ static Transaction *append_tx(Account *acc, Transaction **tail) {
     return tx;
 }
 
-/* Parses tx fields shared by both formats: id, type, amount, balance_after, timestamp, cat. */
-static int fill_tx(Transaction *tx, char **f) {
+static int is_transfer(TxType type) {
+    return type == TX_TRANSFER_OUT || type == TX_TRANSFER_IN;
+}
+
+/*
+ * Parses the transaction fields every format shares: id, type, amount, balance_after and
+ * timestamp in f[0..4], and the category.
+ */
+static int fill_tx(Transaction *tx, char **f, const char *category) {
     unsigned long id;
     if (!parse_ul(f[0], &id) || id == 0 || strlen(f[1]) != 1 || !tx_type_valid(f[1][0]) ||
         !parse_amount(f[2], &tx->amount) || tx->amount <= 0 ||
         !parse_amount(f[3], &tx->balance_after) || !parse_time(f[4], &tx->timestamp) ||
-        !text_field_ok(f[5], CATEGORY_MAX))
+        !text_field_ok(category, CATEGORY_MAX))
         return 0;
     tx->tx_id = id;
     tx->type = (TxType)f[1][0];
-    strcpy(tx->category, f[5]);
+    strcpy(tx->category, category);
     return 1;
 }
 
-/* ---------- version 2 ---------- */
+/* ---------- versions 2 and 3 ---------- */
 
 static int parse_credential(const char *s, Account *acc) {
-    unsigned long hash;
-    if (strncmp(s, CRED_FNV1A, strlen(CRED_FNV1A)) != 0 ||
-        !parse_ul(s + strlen(CRED_FNV1A), &hash) || hash > 0xFFFFFFFFUL)
+    if (!pin_credential_valid(s))
         return 0;
-    acc->pin_hash = (unsigned int)hash;
+    strcpy(acc->pin_credential, s);
     return 1;
 }
 
-static BbStatus load_v2(FILE *f, AccountList *list, LoadReport *report) {
+/* Version 3 added the closed date to accounts and the counterparty to transactions. */
+static BbStatus load_records(FILE *f, AccountList *list, LoadReport *report,
+                             unsigned long version) {
+    const int account_fields = version >= 3 ? 10 : 9;
+    const int tx_fields = version >= 3 ? 9 : 8;
     char line[LINE_MAX_LEN];
     Account **acc_tail = &list->head;
     Account *current = NULL;
@@ -173,9 +182,9 @@ static BbStatus load_v2(FILE *f, AccountList *list, LoadReport *report) {
             return BB_ERR_CORRUPT;
         if (line[0] == '\0')
             continue;
-        char *fld[9];
-        int n = split_fields(line, fld, 9);
-        if (n == 9 && strcmp(fld[0], "A") == 0) {
+        char *fld[10];
+        int n = split_fields(line, fld, 10);
+        if (n == account_fields && strcmp(fld[0], "A") == 0) {
             unsigned long number, failed;
             if (!parse_ul(fld[1], &number) || account_find(list, number) ||
                 !text_field_ok(fld[2], USERNAME_MAX))
@@ -190,18 +199,23 @@ static BbStatus load_v2(FILE *f, AccountList *list, LoadReport *report) {
                 !parse_time(fld[5], &current->created_at) ||
                 !parse_time(fld[6], &current->last_interest_applied) ||
                 !parse_ul(fld[7], &failed) || failed > 1000 ||
-                !parse_time(fld[8], &current->lock_until))
+                !parse_time(fld[8], &current->lock_until) ||
+                (version >= 3 &&
+                 (!parse_time(fld[9], &current->closed_at) || current->closed_at < 0)))
                 return BB_ERR_CORRUPT;
             current->failed_attempts = (unsigned)failed;
-        } else if (n == 8 && strcmp(fld[0], "T") == 0) {
-            unsigned long number;
+        } else if (n == tx_fields && strcmp(fld[0], "T") == 0) {
+            unsigned long number, counterparty = 0;
             if (!current || !parse_ul(fld[1], &number) || number != current->account_number)
                 return BB_ERR_CORRUPT;
             Transaction *tx = append_tx(current, &tx_tail);
             if (!tx)
                 return BB_ERR_NO_MEMORY;
-            if (!fill_tx(tx, fld + 2))
+            if (!fill_tx(tx, fld + 2, fld[n - 1]) ||
+                (version >= 3 && !parse_ul(fld[7], &counterparty)) ||
+                is_transfer(tx->type) != (counterparty != 0) || counterparty == number)
                 return BB_ERR_CORRUPT;
+            tx->counterparty = counterparty;
             if (tx->tx_id >= current->next_tx_id)
                 current->next_tx_id = tx->tx_id + 1;
         } else {
@@ -239,7 +253,8 @@ static BbStatus load_v1_accounts(FILE *f, AccountList *list, LoadReport *report)
         if (!acc)
             return BB_ERR_NO_MEMORY;
         strcpy(acc->username, fld[1]);
-        acc->pin_hash = (unsigned int)hash;
+        /* Version 1 stored a bare FNV-1a hash; it is re-hashed at the next login. */
+        snprintf(acc->pin_credential, sizeof acc->pin_credential, "fnv1a:%lu", hash);
         acc->balance = balance;
         acc->created_at = created;
         acc->last_interest_applied = last_interest;
@@ -259,7 +274,7 @@ static BbStatus load_v1_transactions(FILE *f, AccountList *list, LoadReport *rep
         Transaction parsed;
         memset(&parsed, 0, sizeof parsed);
         if (rc < 0 || split_fields(line, fld, 7) != 7 || !parse_ul(fld[0], &number) ||
-            !fill_tx(&parsed, fld + 1)) {
+            !fill_tx(&parsed, fld + 1, fld[6]) || is_transfer(parsed.type)) {
             if (line[0] != '\0')
                 report->skipped_legacy++;
             continue;
@@ -340,7 +355,7 @@ BbStatus storage_load(const char *dir, AccountList *list, LoadReport *report) {
             else if (version > DATA_FORMAT_VERSION)
                 rc = BB_ERR_VERSION;
             else
-                rc = load_v2(f, list, report);
+                rc = load_records(f, list, report, version);
         }
         fclose(f);
     }
@@ -350,24 +365,24 @@ BbStatus storage_load(const char *dir, AccountList *list, LoadReport *report) {
 }
 
 static int write_all(FILE *f, const AccountList *list) {
-    char t1[24], t2[24], t3[24];
+    char t1[24], t2[24], t3[24], t4[24];
     if (fprintf(f, "%s %d\n", HEADER_MAGIC, DATA_FORMAT_VERSION) < 0)
         return 0;
     for (const Account *acc = list->head; acc; acc = acc->next) {
         char balance[MONEY_STR_MAX];
         money_format_plain(acc->balance, balance, sizeof balance);
-        if (fprintf(f, "A|%lu|%s|" CRED_FNV1A "%u|%s|%s|%s|%u|%s\n", acc->account_number,
-                    acc->username, acc->pin_hash, balance, time_str(acc->created_at, t1),
+        if (fprintf(f, "A|%lu|%s|%s|%s|%s|%s|%u|%s|%s\n", acc->account_number, acc->username,
+                    acc->pin_credential, balance, time_str(acc->created_at, t1),
                     time_str(acc->last_interest_applied, t2), acc->failed_attempts,
-                    time_str(acc->lock_until, t3)) < 0)
+                    time_str(acc->lock_until, t3), time_str(acc->closed_at, t4)) < 0)
             return 0;
         for (const Transaction *tx = acc->tx_head; tx; tx = tx->next) {
             char amount[MONEY_STR_MAX], after[MONEY_STR_MAX];
             money_format_plain(tx->amount, amount, sizeof amount);
             money_format_plain(tx->balance_after, after, sizeof after);
-            if (fprintf(f, "T|%lu|%lu|%c|%s|%s|%s|%s\n", acc->account_number, tx->tx_id,
+            if (fprintf(f, "T|%lu|%lu|%c|%s|%s|%s|%lu|%s\n", acc->account_number, tx->tx_id,
                         (char)tx->type, amount, after, time_str(tx->timestamp, t1),
-                        tx->category) < 0)
+                        tx->counterparty, tx->category) < 0)
                 return 0;
         }
     }

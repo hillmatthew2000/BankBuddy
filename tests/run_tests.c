@@ -7,14 +7,23 @@
 int check_failures = 0;
 int check_count = 0;
 
+/*
+ * The storage tests create and delete data files by their real names, so they must never run
+ * in a directory holding real data. `make test` points BANKBUDDY_TEST_DIR at a private
+ * directory under build/; otherwise the system temporary directory is used.
+ */
 const char *test_temp_dir(void) {
-    const char *names[] = {"TMPDIR", "TEMP", "TMP"};
+    const char *names[] = {"BANKBUDDY_TEST_DIR", "TMPDIR", "TEMP", "TMP"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         const char *dir = getenv(names[i]);
         if (dir && *dir)
             return dir;
     }
-    return ".";
+#ifdef _WIN32
+    return "."; /* Windows always sets TEMP; this is only a last resort */
+#else
+    return "/tmp";
+#endif
 }
 
 void test_temp_path(char *buf, size_t size, const char *name) {
@@ -27,8 +36,10 @@ FILE *test_input(const char *text) {
     FILE *f = fopen(path, "wb");
     if (!f)
         return NULL;
-    fwrite(text, 1, strlen(text), f);
-    fclose(f);
+    size_t len = strlen(text);
+    int ok = fwrite(text, 1, len, f) == len;
+    if (fclose(f) != 0 || !ok)
+        return NULL;
     f = fopen(path, "rb");
     remove(path); /* POSIX keeps the open file; Windows refuses, so it is reused next time */
     return f;
@@ -61,6 +72,13 @@ void check_fail_int(const char *file, int line, const char *expr, long long actu
     check_fail(file, line, msg);
 }
 
+void check_fail_str(const char *file, int line, const char *expr, const char *actual,
+                    const char *expected) {
+    check_failures++;
+    fprintf(stderr, "FAIL %s:%d: %s == \"%s\", expected \"%s\"\n", file, line, expr,
+            actual ? actual : "(null)", expected);
+}
+
 typedef struct Suite {
     const char *name;
     void (*run)(void);
@@ -69,6 +87,7 @@ typedef struct Suite {
 static const Suite suites[] = {
     {"validation", suite_validation}, {"auth", suite_auth},       {"report", suite_report},
     {"money", suite_money},           {"account", suite_account}, {"storage", suite_storage},
+    {"sha256", suite_sha256},         {"term", suite_term},       {"statement", suite_statement},
 };
 
 int main(void) {

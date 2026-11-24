@@ -27,6 +27,9 @@ void trim(char *s);
 /* Letters, digits, space and . - _ ' ; must start with a letter or digit. */
 BbStatus validate_username(const char *name);
 
+/* 1 if the two names are the same apart from upper and lower case. */
+int names_match(const char *a, const char *b);
+
 /* Trims, defaults an empty category to "General", truncates and replaces unsafe characters. */
 void sanitize_category(char *cat);
 

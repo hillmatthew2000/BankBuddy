@@ -22,6 +22,10 @@ const char *bb_status_message(BbStatus status) {
             return "The data file is damaged";
         case BB_ERR_VERSION:
             return "The data file was written by a newer version of BankBuddy";
+        case BB_ERR_CLOSED:
+            return "The account is closed";
+        case BB_ERR_NOT_EMPTY:
+            return "The account still holds money";
     }
     return "Unknown error";
 }

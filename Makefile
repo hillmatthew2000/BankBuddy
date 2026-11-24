@@ -1,8 +1,12 @@
 # BankBuddy build
 #
 #   make              build build/bankbuddy
-#   make test         build and run the test suite
+#   make test         build and run the unit tests and the end-to-end tests
+#   make unit-test    only the unit tests
+#   make e2e-test     only the end-to-end tests (scripted sessions with the real program)
 #   make run          build and start the app (data in the current directory)
+#   make format       reformat the sources with clang-format
+#   make format-check fail if any source is not formatted (used by CI)
 #   make clean        remove all build output
 #
 # Useful variables:
@@ -10,6 +14,7 @@
 #   CFLAGS=...        optimisation/debug flags (default: -O2 -g)
 #   WERROR=1          treat warnings as errors (used by CI)
 #   SANITIZE=1        build with AddressSanitizer + UBSan (gcc/clang on Linux/macOS)
+#   CLANG_FORMAT=...  the clang-format to use (CI pins version 18)
 
 ifeq ($(origin CC),default)
 CC := gcc
@@ -42,6 +47,10 @@ OBJDIR := $(BUILD)/obj
 BIN := $(BUILD)/bankbuddy$(EXE)
 
 TEST_BIN := $(BUILD)/run_tests$(EXE)
+TEST_DIR := $(BUILD)/test-data
+
+CLANG_FORMAT ?= clang-format
+FORMAT_FILES := $(wildcard src/*.c include/*.h tests/*.c tests/*.h)
 
 SRCS := $(wildcard src/*.c)
 OBJS := $(SRCS:src/%.c=$(OBJDIR)/%.o)
@@ -49,7 +58,7 @@ LIB_OBJS := $(filter-out $(OBJDIR)/main.o,$(OBJS))
 TEST_SRCS := $(wildcard tests/*.c)
 TEST_OBJS := $(TEST_SRCS:tests/%.c=$(OBJDIR)/tests/%.o)
 
-.PHONY: all test run clean
+.PHONY: all test unit-test e2e-test run format format-check clean
 
 all: $(BIN)
 
@@ -59,8 +68,15 @@ $(BIN): $(OBJS)
 $(TEST_BIN): $(TEST_OBJS) $(LIB_OBJS)
 	$(CC) $(ALL_CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
-test: $(TEST_BIN)
-	./$(TEST_BIN)
+test: unit-test e2e-test
+
+# The unit tests create and delete data files, so they get a directory of their own.
+unit-test: $(TEST_BIN)
+	mkdir -p $(TEST_DIR)
+	BANKBUDDY_TEST_DIR=$(TEST_DIR) ./$(TEST_BIN)
+
+e2e-test: $(BIN)
+	sh tests/e2e.sh $(BIN)
 
 $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
 	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
@@ -73,6 +89,12 @@ $(OBJDIR) $(OBJDIR)/tests:
 
 run: $(BIN)
 	./$(BIN)
+
+format:
+	$(CLANG_FORMAT) -i $(FORMAT_FILES)
+
+format-check:
+	$(CLANG_FORMAT) --dry-run --Werror $(FORMAT_FILES)
 
 clean:
 	rm -rf $(BUILD)
