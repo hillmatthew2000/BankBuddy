@@ -27,7 +27,7 @@
 typedef enum AuthResult {
     AUTH_OK = 0,
     AUTH_WRONG_PIN, /* the attempt was counted towards the lockout */
-    AUTH_LOCKED     /* too many failures; nothing was checked */
+    AUTH_LOCKED     /* too many failures: refused, and not counted, even if the PIN is right */
 } AuthResult;
 
 /* 1 if `pin` is PIN_MIN_LEN..PIN_MAX_LEN digits. */

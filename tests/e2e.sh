@@ -174,12 +174,18 @@ reject "Welcome"
 
 demo_scenario "lockout"
 run 2 100001 1111 2 100001 2222 2 100001 3333 2 100001 1234 0
-expect_count 3 "The account number or PIN is incorrect."
-expect "Too many failed attempts. Locked - try again in"
+# Even the right PIN is refused now, with the same answer as a wrong one.
+expect_count 4 "The account number or PIN is incorrect."
+expect "After 3 wrong PINs in a row an account is locked for 60 seconds."
 reject "Welcome"
-# The lockout survives a restart.
+reject "Locked"
+# The lockout survives a restart, and a locked account answers exactly like a missing one.
 run 2 100001 1234 0
-expect "Locked - try again in"
+reject "Welcome"
+cp "$WORK/out" "$WORK/locked.out"
+run 2 999999 1234 0
+checks=$((checks + 1))
+cmp -s "$WORK/out" "$WORK/locked.out" || fail "a locked account can be told apart from a missing one"
 
 demo_scenario "end of input"
 run 2 100001 1234 1
@@ -203,17 +209,21 @@ expect_data '^A|100002|hill|pbkdf2-sha256:600000:'
 demo_scenario "transfers"
 run 1 Bob 1111 1111 \
     2 100001 1234 \
-    3 100002 120 Rent y \
+    3 100002 Bob 120 Rent y \
     3 100001 \
-    3 999999 \
-    3 100002 1000 \
-    3 100002 5 "" n \
+    3 999999 Bob \
+    3 100002 Robert \
+    3 100002 bob 1000 \
+    3 100002 BOB 5 "" n \
     0 2 100002 1111 4 "" "" 0 0
+expect "Send 120.00 to Bob, account 100002? [y/N]: "
 expect "Sent 120.00 to account 100002. Your balance is now 380.00."
 expect "That is this account. Choose another one."
-expect "There is no open account 999999."
+# A missing account and a wrong name look the same.
+expect "There is no open account 999999 in that name."
+expect "There is no open account 100002 in that name."
 expect "Insufficient funds: your balance is 380.00."
-expect "Send 5.00 to account 100002? [y/N]: Nothing was sent."
+expect "Send 5.00 to Bob, account 100002? [y/N]: Nothing was sent."
 expect "Balance: 120.00"
 expect "Transfer in  Rent      100001   +120.00"
 expect_data '^T|100001|2|S|120.00|380.00|[0-9]*|100002|Rent$'
@@ -271,13 +281,13 @@ run 1 Bob 1111 1111 \
     9 y 0000 \
     9 y 1234 \
     2 100001 1234 \
-    2 100002 1111 3 100001 0 0
+    2 100002 1111 3 100001 demo 0 0
 expect "Your balance is 500.00. Withdraw or transfer it before closing the account."
 expect "The account is still open."
 expect "The PIN is incorrect."
 expect "Account 100001 is closed."
 expect "Account 100001 was closed on"
-expect "There is no open account 100001."
+expect "There is no open account 100001 in that name."
 expect_data '^A|100001|demo|.*|0.00|[0-9]*|[0-9]*|0|0|[1-9][0-9]*$'
 
 scenario "a damaged data file is left alone"

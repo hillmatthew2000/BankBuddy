@@ -75,6 +75,16 @@ static void test_username(void) {
     CHECK_INT_EQ(validate_username(long_name), BB_OK);
 }
 
+static void test_names_match(void) {
+    CHECK(names_match("Alice Smith", "Alice Smith"));
+    CHECK(names_match("Alice Smith", "alice SMITH"));
+    CHECK(!names_match("Alice Smith", "Alice"));
+    CHECK(!names_match("Alice", "Alice Smith"));
+    CHECK(!names_match("Alice Smith", "Alice  Smith"));
+    CHECK(!names_match("demo", ""));
+    CHECK(!names_match(NULL, "demo"));
+}
+
 static void test_sanitize_category(void) {
     char a[40] = "  Groceries ";
     sanitize_category(a);
@@ -98,5 +108,6 @@ void suite_validation(void) {
     test_parse_ulong();
     test_trim();
     test_username();
+    test_names_match();
     test_sanitize_category();
 }

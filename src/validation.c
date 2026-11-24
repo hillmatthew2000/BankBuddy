@@ -72,6 +72,15 @@ BbStatus validate_username(const char *name) {
     return BB_OK;
 }
 
+int names_match(const char *a, const char *b) {
+    if (!a || !b)
+        return 0;
+    for (; *a && *b; a++, b++)
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
+            return 0;
+    return *a == *b;
+}
+
 void sanitize_category(char *cat) {
     if (!cat)
         return;

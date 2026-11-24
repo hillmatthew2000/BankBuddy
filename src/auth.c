@@ -182,9 +182,12 @@ AuthResult verify_pin(Account *acc, const char *pin, time_t now) {
         return AUTH_WRONG_PIN;
     if (acc->lock_until > now + LOCKOUT_SECONDS)
         acc->lock_until = now + LOCKOUT_SECONDS; /* the clock was turned back */
+    /* The PIN is checked even while locked, so a locked account takes as long to answer as any
+     * other and cannot be spotted by timing. */
+    int match = pin_credential_matches(acc->pin_credential, pin);
     if (auth_lock_remaining(acc, now) > 0)
         return AUTH_LOCKED;
-    if (pin_credential_matches(acc->pin_credential, pin)) {
+    if (match) {
         reset_lock(acc);
         if (!pin_credential_is_current(acc->pin_credential)) {
             char upgraded[PIN_CREDENTIAL_MAX + 1];

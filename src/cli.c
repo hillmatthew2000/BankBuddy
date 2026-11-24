@@ -229,13 +229,13 @@ static Account *login_flow(AccountList *list) {
             }
             term_success("Welcome, %s.", acc->username);
             return acc;
-        case AUTH_LOCKED:
-            print_locked(acc, now);
-            return NULL;
+        case AUTH_LOCKED: /* told apart from a wrong PIN, this would confirm the account exists */
         case AUTH_WRONG_PIN:
             break;
     }
     term_error("The account number or PIN is incorrect.");
+    printf("%sAfter %d wrong PINs in a row an account is locked for %d seconds.%s\n",
+           term_start(STYLE_DIM), MAX_FAILED_ATTEMPTS, LOCKOUT_SECONDS, term_end(STYLE_DIM));
     return NULL;
 }
 
@@ -314,7 +314,7 @@ static void withdraw_flow(Account *acc) {
 }
 
 static void transfer_flow(AccountList *list, Account *acc) {
-    char buf[64], cat[CATEGORY_MAX + 1];
+    char buf[64], name[USERNAME_MAX + 1], cat[CATEGORY_MAX + 1];
     unsigned long to_no;
     Money amount;
     term_heading("Transfer");
@@ -328,18 +328,22 @@ static void transfer_flow(AccountList *list, Account *acc) {
         term_error("That is this account. Choose another one.");
         return;
     }
+    if (!prompt("Name on that account: ", name, sizeof name))
+        return;
+    /* A wrong number and a wrong name get the same answer, so that nobody can find out which
+     * account numbers exist by trying them; it also catches a mistyped number. */
     Account *to = account_find(list, to_no);
-    if (!to || to->closed_at) {
-        term_error("There is no open account %lu.", to_no);
+    if (!to || to->closed_at || !names_match(to->username, name)) {
+        term_error("There is no open account %lu in that name.", to_no);
         return;
     }
     if (!prompt_amount("Amount: ", &amount) || !check_funds(acc, amount) ||
         !prompt_category(cat, sizeof cat))
         return;
 
-    char amt[MONEY_STR_MAX], question[96];
+    char amt[MONEY_STR_MAX], question[160];
     money_format(amount, amt, sizeof amt);
-    snprintf(question, sizeof question, "Send %s to account %lu?", amt, to_no);
+    snprintf(question, sizeof question, "Send %s to %s, account %lu?", amt, to->username, to_no);
     if (!confirm(question)) {
         printf("Nothing was sent.\n");
         return;
