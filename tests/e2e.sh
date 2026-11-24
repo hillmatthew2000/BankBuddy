@@ -32,6 +32,12 @@ scenario() {
     mkdir -p "$dir"
 }
 
+# Starts a scenario whose data directory holds just the demo account: 100001, PIN 1234, 500.00.
+demo_scenario() {
+    scenario "$1"
+    (cd "$dir" && printf '0\n' | "$BIN" --data-dir . --demo) >/dev/null 2>&1
+}
+
 # run LINE... : runs the program inside the scenario's data directory with one input line
 # per argument (plus any options in $ARGS) and keeps the output, without CRs, in $WORK/out.
 run() {
@@ -84,13 +90,31 @@ run
 expect_status 0
 expect "Usage: bankbuddy"
 expect "--data-dir DIR"
+expect "--demo"
 ARGS=--bogus
 run
 expect_status 2
 expect "unknown or incomplete option '--bogus'"
 ARGS=
 
-scenario "demo account and everyday banking"
+scenario "first run"
+run 0
+expect "No accounts yet: choose 1 to create one, or restart with --demo"
+checks=$((checks + 1))
+[ ! -e "$dir/bankbuddy.db" ] || fail "an empty data file was written"
+ARGS=--demo
+run 0
+expect "Added a demo account: number 100001, PIN 1234."
+reject "No accounts yet"
+expect_data '^A|100001|demo|pbkdf2-sha256:600000:[0-9a-f]*:[0-9a-f]*|500.00|'
+run 0
+expect "Warning: --demo only adds the demo account when there are no accounts yet."
+reject "Added a demo account"
+checks=$((checks + 1))
+[ "$(grep -c '^A|' "$dir/bankbuddy.db")" -eq 1 ] || fail "a second demo account was added"
+ARGS=
+
+demo_scenario "demo account and everyday banking"
 run 2 100001 1234 \
     1 "1,250.50" Salary \
     2 40 Groceries \
@@ -113,7 +137,7 @@ reject "$ESC["
 expect_data '^A|100001|demo|pbkdf2-sha256:600000:[0-9a-f]*:[0-9a-f]*|1710.50|'
 expect_data '^T|100001|3|W|40.00|1710.50|[0-9]*|0|Groceries$'
 
-scenario "input checking"
+demo_scenario "input checking"
 run 7 abc "" 2 100001 1234 \
     1 12.345 1 0 1 -5 1 1e3 1 1000000000.01 \
     7 101 7 4 0 0 0
@@ -124,7 +148,7 @@ expect "Enter a percentage from 0 to 100 with up to two decimals."
 expect "Enter a whole number from 1 to 365."
 expect_data '^A|100001|demo|.*|500.00|'
 
-scenario "sign up and log back in"
+demo_scenario "sign up and log back in"
 run 1 "Alice Smith" 1234 4321 \
     1 "Alice Smith" 12 \
     1 "!nvalid" \
@@ -143,12 +167,12 @@ run 2 100002 2468 4 "" "" 0 0
 expect "Balance: 75.00"
 expect "+75.00"
 
-scenario "login failures look the same"
+demo_scenario "login failures look the same"
 run 2 100001 9999 2 999999 1234 2 abc 1234 0
 expect_count 3 "The account number or PIN is incorrect."
 reject "Welcome"
 
-scenario "lockout"
+demo_scenario "lockout"
 run 2 100001 1111 2 100001 2222 2 100001 3333 2 100001 1234 0
 expect_count 3 "The account number or PIN is incorrect."
 expect "Too many failed attempts. Locked - try again in"
@@ -157,7 +181,7 @@ reject "Welcome"
 run 2 100001 1234 0
 expect "Locked - try again in"
 
-scenario "end of input"
+demo_scenario "end of input"
 run 2 100001 1234 1
 expect_status 0
 expect "Amount:"
@@ -176,7 +200,7 @@ expect "+10,019.00"
 reject "Converted"
 expect_data '^A|100002|hill|pbkdf2-sha256:600000:'
 
-scenario "transfers"
+demo_scenario "transfers"
 run 1 Bob 1111 1111 \
     2 100001 1234 \
     3 100002 120 Rent y \
@@ -195,7 +219,7 @@ expect "Transfer in  Rent      100001   +120.00"
 expect_data '^T|100001|2|S|120.00|380.00|[0-9]*|100002|Rent$'
 expect_data '^T|100002|1|R|120.00|120.00|[0-9]*|100001|Rent$'
 
-scenario "statement periods and CSV export"
+demo_scenario "statement periods and CSV export"
 run 2 100001 1234 \
     4 2025-13-01 "" \
     4 2025-06-02 2025-06-01 \
@@ -220,7 +244,7 @@ if [ "$(head -n 1 "$dir/export.csv" | tr -d '\r')" != "id,date,type,category,cou
     fail "unexpected CSV export"
 fi
 
-scenario "change PIN"
+demo_scenario "change PIN"
 run 2 100001 1234 \
     8 0000 \
     8 1234 5678 8765 \
@@ -238,7 +262,7 @@ expect "Locked - try again in"
 expect "You have been logged out."
 reject "Amount:"
 
-scenario "closing an account"
+demo_scenario "closing an account"
 run 1 Bob 1111 1111 \
     2 100001 1234 \
     9 \
