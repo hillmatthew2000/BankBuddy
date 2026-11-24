@@ -13,7 +13,13 @@
 #define PIN_CREDENTIAL_MAX 127
 
 /* Transaction kinds; the character is what the data file stores. */
-typedef enum TxType { TX_DEPOSIT = 'D', TX_WITHDRAWAL = 'W', TX_INTEREST = 'I' } TxType;
+typedef enum TxType {
+    TX_DEPOSIT = 'D',
+    TX_WITHDRAWAL = 'W',
+    TX_INTEREST = 'I',
+    TX_TRANSFER_OUT = 'S', /* sent to another account */
+    TX_TRANSFER_IN = 'R'   /* received from another account */
+} TxType;
 
 typedef struct Transaction {
     unsigned long tx_id;
@@ -21,6 +27,7 @@ typedef struct Transaction {
     Money amount; /* always positive; the type says which way it moved */
     Money balance_after;
     time_t timestamp;
+    unsigned long counterparty; /* the other account of a transfer, otherwise 0 */
     char category[CATEGORY_MAX + 1];
     struct Transaction *next; /* the next older transaction */
 } Transaction;
@@ -34,6 +41,7 @@ typedef struct Account {
     time_t last_interest_applied;
     unsigned int failed_attempts;
     time_t lock_until;
+    time_t closed_at; /* 0 while the account is open */
     unsigned long next_tx_id;
     Transaction *tx_head; /* newest first */
     struct Account *next;
@@ -67,8 +75,22 @@ int tx_is_credit(TxType type);
 BbStatus account_record_transaction(Account *acc, TxType type, Money amount, const char *category,
                                     Money balance_after, time_t now);
 
-/* Banking operations. On failure the account is left unchanged. */
+/*
+ * Banking operations. On failure the accounts are left unchanged. Closed accounts refuse them
+ * with BB_ERR_CLOSED.
+ */
 BbStatus account_deposit(Account *acc, Money amount, const char *category, time_t now);
 BbStatus account_withdraw(Account *acc, Money amount, const char *category, time_t now);
+
+/*
+ * Moves money between two different accounts, recording it on both. Fails with
+ * BB_ERR_INSUFFICIENT if `from` cannot cover it and BB_ERR_RANGE if `to` would go over
+ * MONEY_MAX.
+ */
+BbStatus account_transfer(Account *from, Account *to, Money amount, const char *category,
+                          time_t now);
+
+/* Closes an account with a zero balance (BB_ERR_NOT_EMPTY otherwise); its history is kept. */
+BbStatus account_close(Account *acc, time_t now);
 
 #endif /* ACCOUNT_H */

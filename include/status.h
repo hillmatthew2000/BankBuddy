@@ -12,7 +12,9 @@ typedef enum BbStatus {
     BB_ERR_NO_MEMORY,    /* allocation failed */
     BB_ERR_IO,           /* file could not be read or written */
     BB_ERR_CORRUPT,      /* data file is damaged */
-    BB_ERR_VERSION       /* data file was written by a newer version */
+    BB_ERR_VERSION,      /* data file was written by a newer version */
+    BB_ERR_CLOSED,       /* the account has been closed */
+    BB_ERR_NOT_EMPTY     /* the account still holds money */
 } BbStatus;
 
 /* Short human-readable description, suitable for showing to the user. */

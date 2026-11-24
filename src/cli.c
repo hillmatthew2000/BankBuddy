@@ -10,6 +10,7 @@
 #include "platform.h"
 #include "report.h"
 #include "sha256.h"
+#include "statement.h"
 #include "storage.h"
 #include "term.h"
 #include "validation.h"
@@ -54,6 +55,18 @@ static int prompt_secret(const char *label, char *buf, size_t size) {
     return ask(label, buf, size, 1);
 }
 
+/* Asks a yes/no question; anything but "y" or "yes" (in any case) means no. */
+static int confirm(const char *question) {
+    char label[160], answer[8];
+    snprintf(label, sizeof label, "%s [y/N]: ", question);
+    if (!prompt(label, answer, sizeof answer))
+        return 0;
+    for (char *p = answer; *p; p++)
+        if (*p >= 'A' && *p <= 'Z')
+            *p = (char)(*p - 'A' + 'a');
+    return strcmp(answer, "y") == 0 || strcmp(answer, "yes") == 0;
+}
+
 #define MENU_CLOSED (-1)
 
 /*
@@ -94,15 +107,34 @@ static int save_or_warn(void) {
     return 0;
 }
 
-/* ---------- signing up and logging in ---------- */
+/* ---------- formatting ---------- */
+
+/* "2026-01-31", or "2026-01-31 14:05" with `with_time`, in local time. */
+static void format_date(time_t t, int with_time, char *buf, size_t size) {
+    const struct tm *tmv = localtime(&t);
+    size_t n = 0;
+    if (tmv)
+        n = with_time ? strftime(buf, size, "%Y-%m-%d %H:%M", tmv)
+                      : strftime(buf, size, "%Y-%m-%d", tmv);
+    if (n == 0)
+        snprintf(buf, size, "?");
+}
+
+static void print_locked(const Account *acc, time_t now) {
+    long seconds = auth_lock_remaining(acc, now);
+    term_error("Too many failed attempts. Locked - try again in %ld second%s.", seconds,
+               seconds == 1 ? "" : "s");
+}
+
+/* ---------- PINs, signing up and logging in ---------- */
 
 /* Asks for a new PIN twice and stores its credential in `out`. Returns 1 on success. */
-static int choose_pin(char *out, size_t size) {
+static int choose_pin(const char *label, char *out, size_t size) {
     char pin[PIN_MAX_LEN + 2], again[PIN_MAX_LEN + 2];
-    char label[48];
+    char full_label[64];
     int ok = 0;
-    snprintf(label, sizeof label, "Choose a PIN (%d-%d digits): ", PIN_MIN_LEN, PIN_MAX_LEN);
-    if (!prompt_secret(label, pin, sizeof pin)) {
+    snprintf(full_label, sizeof full_label, "%s (%d-%d digits): ", label, PIN_MIN_LEN, PIN_MAX_LEN);
+    if (!prompt_secret(full_label, pin, sizeof pin)) {
         /* nothing usable was entered */
     } else if (!validate_pin_format(pin)) {
         term_error("A PIN must be %d to %d digits.", PIN_MIN_LEN, PIN_MAX_LEN);
@@ -122,6 +154,28 @@ static int choose_pin(char *out, size_t size) {
     return ok;
 }
 
+/*
+ * Asks a logged-in user for their PIN again before a sensitive change. Wrong answers count
+ * towards the lockout like failed logins. Returns AUTH_LOCKED when the user must be logged out.
+ */
+static AuthResult reauthenticate(Account *acc) {
+    char pin[PIN_MAX_LEN + 2];
+    if (!prompt_secret("Current PIN: ", pin, sizeof pin))
+        return AUTH_WRONG_PIN;
+    time_t now = time(NULL);
+    AuthResult result = verify_pin(acc, pin, now);
+    secure_zero(pin, sizeof pin);
+    save_or_warn();
+    if (auth_lock_remaining(acc, now) > 0) {
+        print_locked(acc, now);
+        printf("You have been logged out.\n");
+        return AUTH_LOCKED;
+    }
+    if (result != AUTH_OK)
+        term_error("The PIN is incorrect.");
+    return result;
+}
+
 static void create_account_flow(AccountList *list) {
     char user[USERNAME_MAX + 1];
     char credential[PIN_CREDENTIAL_MAX + 1];
@@ -133,7 +187,7 @@ static void create_account_flow(AccountList *list) {
                    USERNAME_MAX);
         return;
     }
-    if (!choose_pin(credential, sizeof credential))
+    if (!choose_pin("Choose a PIN", credential, sizeof credential))
         return;
     Account *acc = account_create(list, user, credential, time(NULL));
     if (!acc) {
@@ -167,14 +221,17 @@ static Account *login_flow(AccountList *list) {
 
     switch (result) {
         case AUTH_OK:
+            if (acc->closed_at) {
+                char when[16];
+                format_date(acc->closed_at, 0, when, sizeof when);
+                term_error("Account %lu was closed on %s.", acc->account_number, when);
+                return NULL;
+            }
             term_success("Welcome, %s.", acc->username);
             return acc;
-        case AUTH_LOCKED: {
-            long seconds = auth_lock_remaining(acc, now);
-            term_error("Too many failed attempts. Locked - try again in %ld second%s.", seconds,
-                       seconds == 1 ? "" : "s");
+        case AUTH_LOCKED:
+            print_locked(acc, now);
             return NULL;
-        }
         case AUTH_WRONG_PIN:
             break;
     }
@@ -201,6 +258,16 @@ static int prompt_amount(const char *label, Money *out) {
         return 0;
     }
     return 1;
+}
+
+/* Explains and returns 0 if the account cannot pay `amount`. */
+static int check_funds(const Account *acc, Money amount) {
+    if (amount <= acc->balance)
+        return 1;
+    char bal[MONEY_STR_MAX];
+    money_format(acc->balance, bal, sizeof bal);
+    term_error("Insufficient funds: your balance is %s.", bal);
+    return 0;
 }
 
 static int prompt_category(char *cat, size_t size) {
@@ -236,21 +303,57 @@ static void withdraw_flow(Account *acc) {
     Money amount;
     char cat[CATEGORY_MAX + 1];
     term_heading("Withdraw");
-    if (!prompt_amount("Amount: ", &amount))
-        return;
-    if (amount > acc->balance) {
-        char bal[MONEY_STR_MAX];
-        money_format(acc->balance, bal, sizeof bal);
-        term_error("Insufficient funds: your balance is %s.", bal);
-        return;
-    }
-    if (!prompt_category(cat, sizeof cat))
+    if (!prompt_amount("Amount: ", &amount) || !check_funds(acc, amount) ||
+        !prompt_category(cat, sizeof cat))
         return;
     BbStatus rc = account_withdraw(acc, amount, cat, time(NULL));
     if (rc != BB_OK)
         term_error("The withdrawal failed: %s.", bb_status_message(rc));
     else if (save_or_warn())
         print_result("Withdrew", amount, acc);
+}
+
+static void transfer_flow(AccountList *list, Account *acc) {
+    char buf[64], cat[CATEGORY_MAX + 1];
+    unsigned long to_no;
+    Money amount;
+    term_heading("Transfer");
+    if (!prompt("To account number: ", buf, sizeof buf))
+        return;
+    if (!parse_ulong(buf, &to_no)) {
+        term_error("Enter an account number such as %lu.", FIRST_ACCOUNT_NUMBER + 1);
+        return;
+    }
+    if (to_no == acc->account_number) {
+        term_error("That is this account. Choose another one.");
+        return;
+    }
+    Account *to = account_find(list, to_no);
+    if (!to || to->closed_at) {
+        term_error("There is no open account %lu.", to_no);
+        return;
+    }
+    if (!prompt_amount("Amount: ", &amount) || !check_funds(acc, amount) ||
+        !prompt_category(cat, sizeof cat))
+        return;
+
+    char amt[MONEY_STR_MAX], question[96];
+    money_format(amount, amt, sizeof amt);
+    snprintf(question, sizeof question, "Send %s to account %lu?", amt, to_no);
+    if (!confirm(question)) {
+        printf("Nothing was sent.\n");
+        return;
+    }
+    BbStatus rc = account_transfer(acc, to, amount, cat, time(NULL));
+    if (rc == BB_ERR_RANGE)
+        term_error("Refused: account %lu cannot hold that much.", to_no);
+    else if (rc != BB_OK)
+        term_error("The transfer failed: %s.", bb_status_message(rc));
+    else if (save_or_warn()) {
+        char bal[MONEY_STR_MAX];
+        money_format(acc->balance, bal, sizeof bal);
+        term_success("Sent %s to account %lu. Your balance is now %s.", amt, to_no, bal);
+    }
 }
 
 static void interest_flow(Account *acc) {
@@ -285,53 +388,74 @@ static void interest_flow(Account *acc) {
 
 /* ---------- statements and reports ---------- */
 
-static const char *tx_type_name(TxType type) {
-    switch (type) {
-        case TX_DEPOSIT:
-            return "Deposit";
-        case TX_WITHDRAWAL:
-            return "Withdrawal";
-        case TX_INTEREST:
-            return "Interest";
-    }
-    return "?";
-}
+typedef struct Period {
+    time_t start, end; /* 0 = open */
+    char description[48];
+} Period;
 
-static void format_time(time_t t, char *buf, size_t size) {
-    const struct tm *tmv = localtime(&t);
-    if (!tmv || strftime(buf, size, "%Y-%m-%d %H:%M", tmv) == 0)
-        snprintf(buf, size, "?");
+/* Asks for an optional date range. Returns 0 (after explaining) if it is unusable. */
+static int prompt_period(Period *period) {
+    char from[32], to[32];
+    if (!prompt("From date (YYYY-MM-DD, Enter for the beginning): ", from, sizeof from) ||
+        !prompt("To date (YYYY-MM-DD, Enter for today): ", to, sizeof to))
+        return 0;
+    BbStatus rc = statement_parse_range(from, to, &period->start, &period->end);
+    if (rc == BB_ERR_PARSE) {
+        term_error("Enter dates as YYYY-MM-DD, for example 2026-01-31.");
+        return 0;
+    }
+    if (rc != BB_OK) {
+        term_error("The period must end on or after the day it starts.");
+        return 0;
+    }
+    if (*from && *to)
+        snprintf(period->description, sizeof period->description, ", %s to %s", from, to);
+    else if (*from)
+        snprintf(period->description, sizeof period->description, ", from %s", from);
+    else if (*to)
+        snprintf(period->description, sizeof period->description, ", up to %s", to);
+    else
+        period->description[0] = '\0';
+    return 1;
 }
 
 static void statement_flow(const Account *acc) {
-    static const char *const titles[] = {"#", "Date", "Type", "Category", "Amount", "Balance"};
-    static const Align aligns[] = {ALIGN_RIGHT, ALIGN_LEFT,  ALIGN_LEFT,
+    static const char *const titles[] = {"#",       "Date",   "Type",   "Category",
+                                         "Account", "Amount", "Balance"};
+    static const Align aligns[] = {ALIGN_RIGHT, ALIGN_LEFT,  ALIGN_LEFT, ALIGN_LEFT,
                                    ALIGN_LEFT,  ALIGN_RIGHT, ALIGN_RIGHT};
-    term_heading("Statement for account %lu", acc->account_number);
-    if (!acc->tx_head) {
-        printf("No transactions yet.\n");
+    Period period;
+    term_heading("Statement");
+    if (!prompt_period(&period))
         return;
-    }
-    Table *table = table_new(6, titles, aligns);
+    term_heading("Statement for account %lu%s", acc->account_number, period.description);
+    Table *table = table_new(7, titles, aligns);
     BbStatus rc = table ? BB_OK : BB_ERR_NO_MEMORY;
     for (const Transaction *tx = acc->tx_head; tx && rc == BB_OK; tx = tx->next) {
-        char id[24], when[32], amount[MONEY_STR_MAX + 1], balance[MONEY_STR_MAX];
+        if (!statement_includes(tx, period.start, period.end))
+            continue;
+        char id[24], when[32], other[24] = "", amount[MONEY_STR_MAX + 1], balance[MONEY_STR_MAX];
         int credit = tx_is_credit(tx->type);
         snprintf(id, sizeof id, "%lu", tx->tx_id);
-        format_time(tx->timestamp, when, sizeof when);
+        format_date(tx->timestamp, 1, when, sizeof when);
+        if (tx->counterparty)
+            snprintf(other, sizeof other, "%lu", tx->counterparty);
         amount[0] = credit ? '+' : '-';
         money_format(tx->amount, amount + 1, sizeof amount - 1);
         money_format(tx->balance_after, balance, sizeof balance);
-        const char *cells[] = {id, when, tx_type_name(tx->type), tx->category, amount, balance};
-        const Style styles[] = {
-            STYLE_DIM, STYLE_NONE, STYLE_NONE, STYLE_NONE, credit ? STYLE_GOOD : STYLE_BAD,
-            STYLE_NONE};
+        const char *cells[] = {id,     when,   tx_type_name(tx->type), tx->category, other,
+                               amount, balance};
+        const Style styles[] = {STYLE_DIM,  STYLE_NONE, STYLE_NONE,
+                                STYLE_NONE, STYLE_NONE, credit ? STYLE_GOOD : STYLE_BAD,
+                                STYLE_NONE};
         rc = table_add_row(table, cells, styles);
     }
-    if (rc == BB_OK)
-        table_print(table, stdout);
-    else
+    if (rc != BB_OK)
         term_error("Could not show the statement: %s.", bb_status_message(rc));
+    else if (table_rows(table) == 0)
+        printf("No transactions in this period.\n");
+    else
+        table_print(table, stdout);
     table_free(table);
 }
 
@@ -348,15 +472,19 @@ static BbStatus add_report_row(Table *table, const char *name, Money in, Money o
 static void report_flow(const Account *acc) {
     static const char *const titles[] = {"Category", "Money in", "Money out", "Net"};
     static const Align aligns[] = {ALIGN_LEFT, ALIGN_RIGHT, ALIGN_RIGHT, ALIGN_RIGHT};
+    Period period;
     term_heading("Spending by category");
+    if (!prompt_period(&period))
+        return;
+    term_heading("Spending by category%s", period.description);
     BbStatus rc;
-    CategorySummary *head = generate_category_report(acc, 0, 0, &rc);
+    CategorySummary *head = generate_category_report(acc, period.start, period.end, &rc);
     if (rc != BB_OK) {
         term_error("Could not build the report: %s.", bb_status_message(rc));
         return;
     }
     if (!head) {
-        printf("No transactions yet.\n");
+        printf("No transactions in this period.\n");
         return;
     }
     Table *table = table_new(4, titles, aligns);
@@ -380,17 +508,104 @@ static void report_flow(const Account *acc) {
     free_category_summaries(head);
 }
 
+static void export_flow(const Account *acc) {
+    Period period;
+    char suggested[64], label[112], path[512];
+    term_heading("Export to CSV");
+    if (!prompt_period(&period))
+        return;
+    snprintf(suggested, sizeof suggested, "statement-%lu.csv", acc->account_number);
+    snprintf(label, sizeof label, "Save as (Enter for %s): ", suggested);
+    if (!prompt(label, path, sizeof path))
+        return;
+    if (!*path)
+        strcpy(path, suggested);
+
+    FILE *existing = fopen(path, "rb");
+    if (existing) {
+        fclose(existing);
+        char question[600];
+        snprintf(question, sizeof question, "%s already exists. Replace it?", path);
+        if (!confirm(question)) {
+            printf("Nothing was exported.\n");
+            return;
+        }
+    }
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        term_error("Could not create %s.", path);
+        return;
+    }
+    unsigned long rows;
+    BbStatus rc = statement_write_csv(acc, period.start, period.end, f, &rows);
+    if (fclose(f) != 0 && rc == BB_OK)
+        rc = BB_ERR_IO;
+    if (rc != BB_OK) {
+        remove(path);
+        term_error("Could not write %s: %s.", path, bb_status_message(rc));
+        return;
+    }
+    term_success("Saved %lu transaction%s to %s.", rows, rows == 1 ? "" : "s", path);
+}
+
+/* ---------- account settings ---------- */
+
+/* Returns 0 if the user has to be logged out. */
+static int change_pin_flow(Account *acc) {
+    char credential[PIN_CREDENTIAL_MAX + 1];
+    term_heading("Change PIN");
+    AuthResult result = reauthenticate(acc);
+    if (result != AUTH_OK)
+        return result != AUTH_LOCKED;
+    if (!choose_pin("New PIN", credential, sizeof credential))
+        return 1;
+    memcpy(acc->pin_credential, credential, sizeof credential);
+    if (save_or_warn())
+        term_success("Your PIN has been changed.");
+    return 1;
+}
+
+/* Returns 0 if the user has to be logged out, which includes a successful close. */
+static int close_flow(Account *acc) {
+    term_heading("Close account");
+    if (acc->balance != 0) {
+        char bal[MONEY_STR_MAX];
+        money_format(acc->balance, bal, sizeof bal);
+        term_error("Your balance is %s. Withdraw or transfer it before closing the account.", bal);
+        return 1;
+    }
+    printf("Closing is permanent: you will not be able to log in to account %lu again.\n",
+           acc->account_number);
+    if (!confirm("Close the account?")) {
+        printf("The account is still open.\n");
+        return 1;
+    }
+    AuthResult result = reauthenticate(acc);
+    if (result != AUTH_OK)
+        return result != AUTH_LOCKED;
+    BbStatus rc = account_close(acc, time(NULL));
+    if (rc != BB_OK) {
+        term_error("The account could not be closed: %s.", bb_status_message(rc));
+        return 1;
+    }
+    save_or_warn();
+    term_success("Account %lu is closed.", acc->account_number);
+    return 0;
+}
+
 /* ---------- menus ---------- */
 
-static void account_menu(Account *acc) {
+static void account_menu(AccountList *list, Account *acc) {
     static const char *const items[] = {
-        "Deposit", "Withdraw", "Statement", "Spending by category", "Apply interest", "Log out",
+        "Deposit",       "Withdraw",       "Transfer",   "Statement",     "Spending by category",
+        "Export to CSV", "Apply interest", "Change PIN", "Close account", "Log out",
     };
     while (!input_closed) {
         char balance[MONEY_STR_MAX];
         money_format(acc->balance, balance, sizeof balance);
         term_heading("Account %lu - %s", acc->account_number, acc->username);
         printf("Balance: %s%s%s\n\n", term_start(STYLE_BOLD), balance, term_end(STYLE_BOLD));
+        int stay = 1;
         switch (menu(items, (int)(sizeof items / sizeof items[0]))) {
             case 0:
                 deposit_flow(acc);
@@ -399,20 +614,34 @@ static void account_menu(Account *acc) {
                 withdraw_flow(acc);
                 break;
             case 2:
-                statement_flow(acc);
+                transfer_flow(list, acc);
                 break;
             case 3:
-                report_flow(acc);
+                statement_flow(acc);
                 break;
             case 4:
-                interest_flow(acc);
+                report_flow(acc);
                 break;
             case 5:
+                export_flow(acc);
+                break;
+            case 6:
+                interest_flow(acc);
+                break;
+            case 7:
+                stay = change_pin_flow(acc);
+                break;
+            case 8:
+                stay = close_flow(acc);
+                break;
+            case 9:
                 printf("Logged out.\n");
                 return;
             default: /* input closed */
                 return;
         }
+        if (!stay)
+            return;
     }
 }
 
@@ -429,7 +658,7 @@ void main_menu(AccountList *list, const char *data_dir) {
             case 1: {
                 Account *acc = login_flow(list);
                 if (acc)
-                    account_menu(acc);
+                    account_menu(list, acc);
             } break;
             case 2:
                 printf("Goodbye.\n");

@@ -47,12 +47,17 @@ static void test_round_trip(void) {
     account_list_init(&list);
     Account *a = account_create(&list, "Mary-Jane O'Neil", "fnv1a:3735928559", 1700000000);
     Account *b = account_create(&list, "bob", PBKDF2_SAMPLE, 1700000001);
-    CHECK(a && b);
-    if (!a || !b)
+    Account *c = account_create(&list, "carl", "fnv1a:1", 1700000002);
+    CHECK(a && b && c);
+    if (!a || !b || !c)
         return;
     account_deposit(a, 123456, "Salary", 1700000100);
     account_withdraw(a, 6, "food & drink", 1700000200);
     account_deposit(b, 1, "", 1700000300);
+    account_transfer(a, b, 5000, "Rent", 1700000400);
+    account_deposit(c, 500, "", 1700000500);
+    account_transfer(c, a, 500, "Payback", 1700000600);
+    CHECK_INT_EQ(account_close(c, 1700000700), BB_OK);
     a->failed_attempts = 2;
     a->lock_until = 1700000999;
 
@@ -70,6 +75,7 @@ static void test_round_trip(void) {
         CHECK_INT_EQ(y->created_at, x->created_at);
         CHECK_INT_EQ(y->failed_attempts, x->failed_attempts);
         CHECK_INT_EQ(y->lock_until, x->lock_until);
+        CHECK_INT_EQ(y->closed_at, x->closed_at);
         CHECK_INT_EQ(y->next_tx_id, x->next_tx_id);
         const Transaction *s = x->tx_head, *t = y->tx_head;
         for (; s && t; s = s->next, t = t->next) {
@@ -78,6 +84,7 @@ static void test_round_trip(void) {
             CHECK_INT_EQ(t->amount, s->amount);
             CHECK_INT_EQ(t->balance_after, s->balance_after);
             CHECK_INT_EQ(t->timestamp, s->timestamp);
+            CHECK_INT_EQ(t->counterparty, s->counterparty);
             CHECK_STR_EQ(t->category, s->category);
         }
         CHECK(s == NULL && t == NULL);
@@ -136,6 +143,39 @@ static void test_legacy_migration(void) {
     remove_files();
 }
 
+/* Version 2 files (no closed date, no counterparty) load and are saved as the current version. */
+static void test_version_2_upgrade(void) {
+    remove_files();
+    write_file(DATA_FILE, "BANKBUDDY 2\n"
+                          "A|100001|demo|fnv1a:4257489661|500.00|1758143802|1758143802|1|0\n"
+                          "T|100001|2|W|1.00|500.00|1758143803|Coffee\n"
+                          "T|100001|1|D|501.00|501.00|1758143802|Seed\n");
+    AccountList list;
+    CHECK_INT_EQ(storage_load(test_temp_dir(), &list, NULL), BB_OK);
+    const Account *acc = account_find(&list, 100001);
+    CHECK(acc != NULL);
+    if (acc) {
+        CHECK_INT_EQ(acc->closed_at, 0);
+        CHECK_INT_EQ(acc->failed_attempts, 1);
+        CHECK_INT_EQ(acc->next_tx_id, 3);
+        CHECK(acc->tx_head && acc->tx_head->counterparty == 0);
+        CHECK_STR_EQ(acc->tx_head ? acc->tx_head->category : "", "Coffee");
+    }
+    CHECK_INT_EQ(storage_save(test_temp_dir(), &list), BB_OK);
+    account_free_all(&list);
+
+    char path[1024], header[32] = "";
+    path_in(path, sizeof path, DATA_FILE);
+    FILE *f = fopen(path, "rb");
+    CHECK(f != NULL);
+    if (f) {
+        CHECK(fgets(header, sizeof header, f) != NULL);
+        fclose(f);
+    }
+    CHECK_STR_EQ(header, "BANKBUDDY 3\n");
+    remove_files();
+}
+
 static void expect_load_error(const char *content, BbStatus expected, unsigned long line) {
     remove_files();
     write_file(DATA_FILE, content);
@@ -153,7 +193,7 @@ static void test_damaged_files_are_refused(void) {
 
     expect_load_error("", BB_ERR_CORRUPT, 1);
     expect_load_error("NOT A BANKBUDDY FILE\n", BB_ERR_CORRUPT, 1);
-    expect_load_error("BANKBUDDY 3\n", BB_ERR_VERSION, 0);
+    expect_load_error("BANKBUDDY 4\n", BB_ERR_VERSION, 0);
 
     snprintf(text, sizeof text, "BANKBUDDY 2\n%s%s", account, account);
     expect_load_error(text, BB_ERR_CORRUPT, 3); /* duplicate account */
@@ -174,6 +214,19 @@ static void test_damaged_files_are_refused(void) {
     snprintf(text, sizeof text,
              "BANKBUDDY 2\nA|100001|demo|pbkdf2-sha256:1:00:00|5.00|1758143802|1758143802|0|0\n");
     expect_load_error(text, BB_ERR_CORRUPT, 2); /* malformed credential */
+
+    snprintf(text, sizeof text, "BANKBUDDY 2\n%sT|100001|1|S|5.00|5.00|1|Rent\n", account);
+    expect_load_error(text, BB_ERR_CORRUPT, 3); /* version 2 had no transfers */
+
+    const char *account3 = "A|100001|demo|fnv1a:4257489661|500.00|1758143802|1758143802|0|0|0\n";
+    snprintf(text, sizeof text, "BANKBUDDY 3\n%s", account);
+    expect_load_error(text, BB_ERR_CORRUPT, 2); /* version 3 accounts have a closed field */
+    snprintf(text, sizeof text, "BANKBUDDY 3\n%sT|100001|1|D|5.00|5.00|1|100002|Seed\n", account3);
+    expect_load_error(text, BB_ERR_CORRUPT, 3); /* a deposit has no counterparty */
+    snprintf(text, sizeof text, "BANKBUDDY 3\n%sT|100001|1|R|5.00|5.00|1|0|Rent\n", account3);
+    expect_load_error(text, BB_ERR_CORRUPT, 3); /* a transfer needs one */
+    snprintf(text, sizeof text, "BANKBUDDY 3\n%sT|100001|1|R|5.00|5.00|1|100001|Rent\n", account3);
+    expect_load_error(text, BB_ERR_CORRUPT, 3); /* ...and not itself */
     remove_files();
 }
 
@@ -181,5 +234,6 @@ void suite_storage(void) {
     test_missing_file_is_empty();
     test_round_trip();
     test_legacy_migration();
+    test_version_2_upgrade();
     test_damaged_files_are_refused();
 }

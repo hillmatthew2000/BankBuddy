@@ -31,6 +31,8 @@ BbStatus apply_interest(Account *acc, int rate_bp, unsigned periods_per_year, ti
     if (!acc || !credited)
         return BB_ERR_INVALID_ARG;
     *credited = 0;
+    if (acc->closed_at)
+        return BB_ERR_CLOSED;
     Money interest;
     BbStatus rc = interest_for_period(acc->balance, rate_bp, periods_per_year, &interest);
     if (rc != BB_OK)

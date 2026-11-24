@@ -80,7 +80,7 @@ typedef struct Suite {
 static const Suite suites[] = {
     {"validation", suite_validation}, {"auth", suite_auth},       {"report", suite_report},
     {"money", suite_money},           {"account", suite_account}, {"storage", suite_storage},
-    {"sha256", suite_sha256},         {"term", suite_term},
+    {"sha256", suite_sha256},         {"term", suite_term},       {"statement", suite_statement},
 };
 
 int main(void) {

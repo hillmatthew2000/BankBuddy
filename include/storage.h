@@ -6,20 +6,23 @@
 /*
  * All data lives in one text file, DATA_FILE, inside the data directory:
  *
- *   BANKBUDDY 2
- *   A|number|username|credential|balance|created|last_interest|failed_attempts|lock_until
- *   T|number|tx_id|type|amount|balance_after|timestamp|category
+ *   BANKBUDDY 3
+ *   A|number|username|credential|balance|created|last_interest|failed_attempts|lock_until|closed
+ *   T|number|tx_id|type|amount|balance_after|timestamp|counterparty|category
  *
- * The credential is a salted PIN hash in one of the formats described in auth.h.
- * Amounts are decimal with two places ("1234.50"); times are Unix seconds. Each account line
- * is followed by its transactions, newest first. Saving writes a temporary file and renames it
- * over the old one, so a crash mid-save never leaves a half-written file behind.
+ * The credential is a salted PIN hash in one of the formats described in auth.h. Amounts are
+ * decimal with two places ("1234.50"); times are Unix seconds and `closed` is 0 for an open
+ * account. The transaction type is a TxType letter; transfers (S, R) name the other account
+ * as counterparty, every other type has 0. Each account line is followed by its transactions,
+ * newest first. Saving writes a temporary file and renames it over the old one, so a crash
+ * mid-save never leaves a half-written file behind.
  *
- * Version 1 (accounts.db + transactions.db, written by earlier releases) is read once and
- * converted; the old files are left untouched.
+ * Older formats are read and converted the next time the data is saved: version 2 is the
+ * same without `closed` and `counterparty`; version 1 was two files (accounts.db and
+ * transactions.db), which are left untouched.
  */
 #define DATA_FILE           "bankbuddy.db"
-#define DATA_FORMAT_VERSION 2
+#define DATA_FORMAT_VERSION 3
 #define LEGACY_ACCOUNTS     "accounts.db"
 #define LEGACY_TRANSACTIONS "transactions.db"
 
