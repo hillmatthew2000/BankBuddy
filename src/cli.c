@@ -388,14 +388,16 @@ static void interest_flow(Account *acc) {
 
 /* ---------- statements and reports ---------- */
 
+#define DATE_INPUT_MAX 31
+
 typedef struct Period {
-    time_t start, end; /* 0 = open */
-    char description[48];
+    time_t start, end;                        /* 0 = open */
+    char description[2 * DATE_INPUT_MAX + 8]; /* ", <from> to <to>" */
 } Period;
 
 /* Asks for an optional date range. Returns 0 (after explaining) if it is unusable. */
 static int prompt_period(Period *period) {
-    char from[32], to[32];
+    char from[DATE_INPUT_MAX + 1], to[DATE_INPUT_MAX + 1];
     if (!prompt("From date (YYYY-MM-DD, Enter for the beginning): ", from, sizeof from) ||
         !prompt("To date (YYYY-MM-DD, Enter for today): ", to, sizeof to))
         return 0;

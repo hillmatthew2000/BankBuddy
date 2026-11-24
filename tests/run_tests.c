@@ -72,6 +72,13 @@ void check_fail_int(const char *file, int line, const char *expr, long long actu
     check_fail(file, line, msg);
 }
 
+void check_fail_str(const char *file, int line, const char *expr, const char *actual,
+                    const char *expected) {
+    check_failures++;
+    fprintf(stderr, "FAIL %s:%d: %s == \"%s\", expected \"%s\"\n", file, line, expr,
+            actual ? actual : "(null)", expected);
+}
+
 typedef struct Suite {
     const char *name;
     void (*run)(void);

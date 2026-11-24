@@ -1,5 +1,13 @@
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L /* stat */
+#endif
+
 #include <stdio.h>
 #include <string.h>
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 
 #include "check.h"
 #include "storage.h"
@@ -103,6 +111,24 @@ static void test_round_trip(void) {
     account_free_all(&list);
     account_free_all(&loaded);
     remove_files();
+}
+
+/* On POSIX systems the data file is readable by its owner only, even if a leftover temporary
+ * file with wider access is in the way. Windows files inherit the folder's permissions. */
+static void test_data_file_is_private(void) {
+#ifndef _WIN32
+    remove_files();
+    write_file(DATA_FILE ".tmp", "left over from a crash\n");
+    AccountList list;
+    account_list_init(&list);
+    CHECK_INT_EQ(storage_save(test_temp_dir(), &list), BB_OK);
+    char path[1024];
+    struct stat st;
+    path_in(path, sizeof path, DATA_FILE);
+    CHECK(stat(path, &st) == 0);
+    CHECK_INT_EQ(st.st_mode & 0777, 0600);
+    remove_files();
+#endif
 }
 
 static void test_legacy_migration(void) {
@@ -233,6 +259,7 @@ static void test_damaged_files_are_refused(void) {
 void suite_storage(void) {
     test_missing_file_is_empty();
     test_round_trip();
+    test_data_file_is_private();
     test_legacy_migration();
     test_version_2_upgrade();
     test_damaged_files_are_refused();

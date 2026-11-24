@@ -11,6 +11,8 @@ extern int check_count;
 void check_fail(const char *file, int line, const char *msg);
 void check_fail_int(const char *file, int line, const char *expr, long long actual,
                     long long expected);
+void check_fail_str(const char *file, int line, const char *expr, const char *actual,
+                    const char *expected);
 
 #define CHECK(cond)                                \
     do {                                           \
@@ -27,17 +29,13 @@ void check_fail_int(const char *file, int line, const char *expr, long long actu
                            (long long)(expected));                           \
     } while (0)
 
-#define CHECK_STR_EQ(actual, expected)                                                        \
-    do {                                                                                      \
-        const char *check_a_ = (actual);                                                      \
-        const char *check_e_ = (expected);                                                    \
-        check_count++;                                                                        \
-        if (check_a_ == NULL || strcmp(check_a_, check_e_) != 0) {                            \
-            char check_msg_[256];                                                             \
-            snprintf(check_msg_, sizeof check_msg_, "%s == \"%s\", expected \"%s\"", #actual, \
-                     check_a_ ? check_a_ : "(null)", check_e_);                               \
-            check_fail(__FILE__, __LINE__, check_msg_);                                       \
-        }                                                                                     \
+#define CHECK_STR_EQ(actual, expected)                                       \
+    do {                                                                     \
+        const char *check_a_ = (actual);                                     \
+        const char *check_e_ = (expected);                                   \
+        check_count++;                                                       \
+        if (check_a_ == NULL || strcmp(check_a_, check_e_) != 0)             \
+            check_fail_str(__FILE__, __LINE__, #actual, check_a_, check_e_); \
     } while (0)
 
 /* Scratch files live in $TMPDIR/$TEMP (or the current directory if neither is set). */

@@ -1,5 +1,8 @@
 #if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
-#define _POSIX_C_SOURCE 200809L /* fileno, fsync, open, termios */
+#define _POSIX_C_SOURCE 200809L /* fileno, fdopen, fsync, open, sigaction, termios */
+#endif
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE /* F_FULLFSYNC, which _POSIX_C_SOURCE alone hides */
 #endif
 
 #include "platform.h"
@@ -13,6 +16,8 @@
 #include <wincrypt.h>
 #else
 #include <fcntl.h>
+#include <signal.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 #endif
@@ -22,9 +27,28 @@ FILE *platform_open_for_commit(const char *path) {
     /* "c" (Microsoft CRT): fflush() also commits the file buffers to disk. */
     return fopen(path, "wbc");
 #else
-    return fopen(path, "wb");
+    /* Only the owner may read or write the file: it holds PIN hashes and balances. */
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    if (fd < 0)
+        return NULL;
+    (void)fchmod(fd, S_IRUSR | S_IWUSR); /* in case a leftover file with wider access was reused */
+    FILE *f = fdopen(fd, "wb");
+    if (!f)
+        close(fd);
+    return f;
 #endif
 }
+
+#ifndef _WIN32
+/* fsync(), except on macOS, where fsync() stops at the drive's cache and F_FULLFSYNC does not. */
+static int sync_fd(int fd) {
+#ifdef F_FULLFSYNC
+    if (fcntl(fd, F_FULLFSYNC) == 0)
+        return 0;
+#endif
+    return fsync(fd);
+}
+#endif
 
 BbStatus platform_sync(FILE *f) {
     if (!f)
@@ -32,7 +56,7 @@ BbStatus platform_sync(FILE *f) {
     if (fflush(f) != 0 || ferror(f))
         return BB_ERR_IO;
 #ifndef _WIN32
-    if (fsync(fileno(f)) != 0)
+    if (sync_fd(fileno(f)) != 0)
         return BB_ERR_IO;
 #endif
     return BB_OK;
@@ -56,7 +80,7 @@ static void sync_parent_dir(const char *path) {
     }
     int fd = open(dir, O_RDONLY);
     if (fd >= 0) {
-        (void)fsync(fd); /* best effort: some filesystems refuse to sync directories */
+        (void)sync_fd(fd); /* best effort: some filesystems refuse to sync directories */
         close(fd);
     }
 }
@@ -100,6 +124,37 @@ BbStatus platform_random_bytes(void *buf, size_t len) {
 #endif
 }
 
+#ifndef _WIN32
+/* The terminal settings from before echo was turned off, for the signal handler below. */
+static struct termios echo_saved;
+static volatile sig_atomic_t echo_hidden = 0;
+
+/* Turns echo back on if the program is interrupted at a hidden prompt, then dies as usual. */
+static void restore_echo_and_die(int sig) {
+    if (echo_hidden)
+        (void)tcsetattr(STDIN_FILENO, TCSANOW, &echo_saved);
+    raise(sig); /* SA_RESETHAND has put back the default action */
+}
+
+static void install_echo_guard(void) {
+    static int installed = 0;
+    static const int signals[] = {SIGINT, SIGTERM, SIGHUP, SIGQUIT};
+    if (installed)
+        return;
+    installed = 1;
+    for (size_t i = 0; i < sizeof signals / sizeof signals[0]; i++) {
+        struct sigaction old, sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sa_handler = restore_echo_and_die;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = (int)SA_RESETHAND; /* 0x80000000 on Linux, an unsigned constant */
+        /* A signal the caller chose to ignore (nohup, for one) stays ignored. */
+        if (sigaction(signals[i], NULL, &old) == 0 && old.sa_handler != SIG_IGN)
+            (void)sigaction(signals[i], &sa, NULL);
+    }
+}
+#endif
+
 int platform_stdin_echo(int enable) {
 #ifdef _WIN32
     HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
@@ -115,11 +170,19 @@ int platform_stdin_echo(int enable) {
     struct termios t;
     if (!isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &t) != 0)
         return 0;
-    if (enable)
+    if (enable) {
+        echo_hidden = 0;
         t.c_lflag |= ECHO;
-    else
-        t.c_lflag &= ~(tcflag_t)ECHO;
-    return tcsetattr(STDIN_FILENO, TCSANOW, &t) == 0;
+        return tcsetattr(STDIN_FILENO, TCSANOW, &t) == 0;
+    }
+    install_echo_guard();
+    echo_saved = t;
+    echo_hidden = 1;
+    t.c_lflag &= ~(tcflag_t)ECHO;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &t) == 0)
+        return 1;
+    echo_hidden = 0;
+    return 0;
 #endif
 }
 
