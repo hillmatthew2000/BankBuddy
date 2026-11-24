@@ -1,6 +1,8 @@
 {
+    "C_Cpp.default.cStandard": "c11",
+    "C_Cpp.default.compilerPath": "gcc",
+    "C_Cpp.default.includePath": ["${workspaceFolder}/include"],
     "files.associations": {
-        "BankBuddy.C": "cpp"
-    },
-    "C_Cpp.default.compilerPath": "cl.exe"
+        "*.h": "c"
+    }
 }

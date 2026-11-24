@@ -1,88 +1,135 @@
-#include <stdio.h>
+#include "account.h"
+
 #include <stdlib.h>
 #include <string.h>
-#include "account.h"
-#include "validation.h"
+
+#define DEFAULT_CATEGORY "General"
+
+static void copy_string(char *dst, size_t size, const char *src) {
+    size_t len = strlen(src);
+    if (len >= size)
+        len = size - 1;
+    memcpy(dst, src, len);
+    dst[len] = '\0';
+}
 
 void account_list_init(AccountList *list) {
-    if (!list) return;
+    if (!list)
+        return;
     list->head = NULL;
-    list->next_account_number = 100000; /* start range */
+    list->last_account_number = FIRST_ACCOUNT_NUMBER;
 }
 
-static Account *allocate_account(void) {
-    Account *acc = (Account*)calloc(1, sizeof(Account));
-    return acc;
+static void free_transactions(Transaction *tx) {
+    while (tx) {
+        Transaction *older = tx->next;
+        free(tx);
+        tx = older;
+    }
 }
 
-Account *account_create(AccountList *list, const char *username, unsigned int pin_hash, double initial_balance) {
-    if (!list || !username) return NULL;
-    Account *acc = allocate_account();
-    if (!acc) return NULL;
-    acc->account_number = ++list->next_account_number;
-    strncpy(acc->username, username, USERNAME_MAX);
-    acc->username[USERNAME_MAX] = '\0';
+void account_free_all(AccountList *list) {
+    if (!list)
+        return;
+    Account *acc = list->head;
+    while (acc) {
+        Account *next = acc->next;
+        free_transactions(acc->tx_head);
+        free(acc);
+        acc = next;
+    }
+    list->head = NULL;
+}
+
+Account *account_create(AccountList *list, const char *username, unsigned int pin_hash,
+                        time_t now) {
+    if (!list || !username)
+        return NULL;
+    Account *acc = calloc(1, sizeof *acc);
+    if (!acc)
+        return NULL;
+    acc->account_number = ++list->last_account_number;
+    copy_string(acc->username, sizeof acc->username, username);
     acc->pin_hash = pin_hash;
-    acc->balance = initial_balance;
-    acc->created_at = acc->last_interest_applied = time(NULL);
-    acc->failed_attempts = 0;
-    acc->lock_until = 0;
-    acc->tx_head = NULL;
+    acc->balance = 0;
+    acc->created_at = now;
+    acc->last_interest_applied = now;
+    acc->next_tx_id = 1;
     acc->next = list->head;
     list->head = acc;
     return acc;
 }
 
 Account *account_find(AccountList *list, unsigned long account_number) {
-    if (!list) return NULL;
-    for (Account *cur = list->head; cur; cur = cur->next) {
-        if (cur->account_number == account_number) return cur;
-    }
+    if (!list)
+        return NULL;
+    for (Account *acc = list->head; acc; acc = acc->next)
+        if (acc->account_number == account_number)
+            return acc;
     return NULL;
 }
 
-unsigned long account_next_tx_id(const Account *acc) {
-    unsigned long max_id = 0;
-    for (const Transaction *t = acc ? acc->tx_head : NULL; t; t = t->next) {
-        if (t->tx_id > max_id) max_id = t->tx_id;
-    }
-    return max_id + 1;
+int tx_type_valid(int type) {
+    return type == TX_DEPOSIT || type == TX_WITHDRAWAL || type == TX_INTEREST;
 }
 
-int account_record_transaction(Account *acc, char type, double amount, const char *category, double new_balance) {
-    if (!acc) return -1;
-    Transaction *tx = (Transaction*)calloc(1, sizeof(Transaction));
-    if (!tx) return -1;
-    tx->tx_id = account_next_tx_id(acc);
-    tx->amount = amount;
+int tx_is_credit(TxType type) {
+    return type == TX_DEPOSIT || type == TX_INTEREST;
+}
+
+BbStatus account_record_transaction(Account *acc, TxType type, Money amount, const char *category,
+                                    Money balance_after, time_t now) {
+    if (!acc || !tx_type_valid((int)type))
+        return BB_ERR_INVALID_ARG;
+    Transaction *tx = calloc(1, sizeof *tx);
+    if (!tx)
+        return BB_ERR_NO_MEMORY;
+    tx->tx_id = acc->next_tx_id++;
     tx->type = type;
-    tx->timestamp = time(NULL);
-    tx->balance_after = new_balance;
-    if (category) {
-        strncpy(tx->category, category, CATEGORY_MAX);
-        tx->category[CATEGORY_MAX] = '\0';
-    } else {
-        strncpy(tx->category, "General", CATEGORY_MAX);
-        tx->category[CATEGORY_MAX] = '\0';
-    }
+    tx->amount = amount;
+    tx->balance_after = balance_after;
+    tx->timestamp = now;
+    copy_string(tx->category, sizeof tx->category,
+                category && category[0] ? category : DEFAULT_CATEGORY);
     tx->next = acc->tx_head;
     acc->tx_head = tx;
-    return 0;
+    return BB_OK;
 }
 
-void account_free_all(AccountList *list) {
-    if (!list) return;
-    Account *cur = list->head;
-    while (cur) {
-        Transaction *t = cur->tx_head;
-        while (t) {
-            Transaction *nxtt = t->next;
-            free(t);
-            t = nxtt;
-        }
-        Account *nxt = cur->next;
-        free(cur);
-        cur = nxt;
-    }
-    list->head = NULL;
+/* Moves `delta` (signed) into the balance and records it, or changes nothing on failure. */
+static BbStatus apply(Account *acc, TxType type, Money amount, Money delta, const char *category,
+                      time_t now) {
+    Money new_balance;
+    BbStatus rc = money_add(acc->balance, delta, &new_balance);
+    if (rc != BB_OK)
+        return rc;
+    if (new_balance < 0)
+        return BB_ERR_INSUFFICIENT;
+    rc = account_record_transaction(acc, type, amount, category, new_balance, now);
+    if (rc != BB_OK)
+        return rc;
+    acc->balance = new_balance;
+    return BB_OK;
+}
+
+static BbStatus check_amount(const Account *acc, Money amount) {
+    if (!acc)
+        return BB_ERR_INVALID_ARG;
+    if (amount <= 0 || amount > MONEY_MAX)
+        return BB_ERR_RANGE;
+    return BB_OK;
+}
+
+BbStatus account_deposit(Account *acc, Money amount, const char *category, time_t now) {
+    BbStatus rc = check_amount(acc, amount);
+    if (rc != BB_OK)
+        return rc;
+    return apply(acc, TX_DEPOSIT, amount, amount, category, now);
+}
+
+BbStatus account_withdraw(Account *acc, Money amount, const char *category, time_t now) {
+    BbStatus rc = check_amount(acc, amount);
+    if (rc != BB_OK)
+        return rc;
+    return apply(acc, TX_WITHDRAWAL, amount, -amount, category, now);
 }

@@ -1,7 +1,8 @@
-#include <stdio.h>
 #include "gui_stub.h"
 
-int gui_run() {
+#include <stdio.h>
+
+int gui_run(void) {
     printf("GUI not yet implemented. Falling back to CLI.\n");
     return 0;
 }
