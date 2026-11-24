@@ -17,7 +17,10 @@ static void usage(FILE *out) {
 /* Creates the demo account (PIN 1234) on a first run so there is something to try. */
 static void seed_demo(AccountList *list) {
     time_t now = time(NULL);
-    Account *demo = account_create(list, "demo", hash_pin("1234"), now);
+    char credential[PIN_CREDENTIAL_MAX + 1];
+    if (pin_credential_create("1234", PIN_HASH_ITERATIONS, credential, sizeof credential) != BB_OK)
+        return;
+    Account *demo = account_create(list, "demo", credential, now);
     if (demo)
         account_deposit(demo, 50000, "Seed", now);
 }

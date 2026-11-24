@@ -5,8 +5,8 @@
 static void test_create_and_find(void) {
     AccountList list;
     account_list_init(&list);
-    Account *a = account_create(&list, "alice", 0, 1000);
-    Account *b = account_create(&list, "bob", 0, 1000);
+    Account *a = account_create(&list, "alice", "fnv1a:0", 1000);
+    Account *b = account_create(&list, "bob", "fnv1a:0", 1000);
     CHECK(a && b);
     if (!a || !b)
         return;
@@ -22,7 +22,7 @@ static void test_create_and_find(void) {
 static void test_deposit_withdraw(void) {
     AccountList list;
     account_list_init(&list);
-    Account *acc = account_create(&list, "carol", 0, 1000);
+    Account *acc = account_create(&list, "carol", "fnv1a:0", 1000);
     CHECK(acc != NULL);
     if (!acc)
         return;
@@ -61,7 +61,7 @@ static void test_deposit_withdraw(void) {
 static void test_apply_interest(void) {
     AccountList list;
     account_list_init(&list);
-    Account *acc = account_create(&list, "dave", 0, 1000);
+    Account *acc = account_create(&list, "dave", "fnv1a:0", 1000);
     CHECK(acc != NULL);
     if (!acc)
         return;

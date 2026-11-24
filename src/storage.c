@@ -6,11 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "auth.h"
 #include "platform.h"
 
 #define LINE_MAX_LEN 1024
 #define HEADER_MAGIC "BANKBUDDY"
-#define CRED_FNV1A   "fnv1a:"
 #define TEMP_SUFFIX  ".tmp"
 #define PATH_MAX_LEN 1024
 
@@ -151,11 +151,9 @@ static int fill_tx(Transaction *tx, char **f) {
 /* ---------- version 2 ---------- */
 
 static int parse_credential(const char *s, Account *acc) {
-    unsigned long hash;
-    if (strncmp(s, CRED_FNV1A, strlen(CRED_FNV1A)) != 0 ||
-        !parse_ul(s + strlen(CRED_FNV1A), &hash) || hash > 0xFFFFFFFFUL)
+    if (!pin_credential_valid(s))
         return 0;
-    acc->pin_hash = (unsigned int)hash;
+    strcpy(acc->pin_credential, s);
     return 1;
 }
 
@@ -239,7 +237,8 @@ static BbStatus load_v1_accounts(FILE *f, AccountList *list, LoadReport *report)
         if (!acc)
             return BB_ERR_NO_MEMORY;
         strcpy(acc->username, fld[1]);
-        acc->pin_hash = (unsigned int)hash;
+        /* Version 1 stored a bare FNV-1a hash; it is re-hashed at the next login. */
+        snprintf(acc->pin_credential, sizeof acc->pin_credential, "fnv1a:%lu", hash);
         acc->balance = balance;
         acc->created_at = created;
         acc->last_interest_applied = last_interest;
@@ -356,8 +355,8 @@ static int write_all(FILE *f, const AccountList *list) {
     for (const Account *acc = list->head; acc; acc = acc->next) {
         char balance[MONEY_STR_MAX];
         money_format_plain(acc->balance, balance, sizeof balance);
-        if (fprintf(f, "A|%lu|%s|" CRED_FNV1A "%u|%s|%s|%s|%u|%s\n", acc->account_number,
-                    acc->username, acc->pin_hash, balance, time_str(acc->created_at, t1),
+        if (fprintf(f, "A|%lu|%s|%s|%s|%s|%s|%u|%s\n", acc->account_number, acc->username,
+                    acc->pin_credential, balance, time_str(acc->created_at, t1),
                     time_str(acc->last_interest_applied, t2), acc->failed_attempts,
                     time_str(acc->lock_until, t3)) < 0)
             return 0;

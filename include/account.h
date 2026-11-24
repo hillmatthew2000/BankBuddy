@@ -9,6 +9,8 @@
 
 #define USERNAME_MAX 63
 #define CATEGORY_MAX 31
+/* Longest stored PIN credential (see auth.h for the formats). */
+#define PIN_CREDENTIAL_MAX 127
 
 /* Transaction kinds; the character is what the data file stores. */
 typedef enum TxType { TX_DEPOSIT = 'D', TX_WITHDRAWAL = 'W', TX_INTEREST = 'I' } TxType;
@@ -26,7 +28,7 @@ typedef struct Transaction {
 typedef struct Account {
     unsigned long account_number;
     char username[USERNAME_MAX + 1];
-    unsigned int pin_hash;
+    char pin_credential[PIN_CREDENTIAL_MAX + 1];
     Money balance;
     time_t created_at;
     time_t last_interest_applied;
@@ -49,7 +51,8 @@ void account_list_init(AccountList *list);
 void account_free_all(AccountList *list);
 
 /* Creates an empty account with the next free number and adds it to the list. */
-Account *account_create(AccountList *list, const char *username, unsigned int pin_hash, time_t now);
+Account *account_create(AccountList *list, const char *username, const char *pin_credential,
+                        time_t now);
 Account *account_find(AccountList *list, unsigned long account_number);
 
 /* Returns 1 if `type` is one of the TxType values. */

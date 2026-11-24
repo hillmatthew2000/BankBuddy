@@ -1,6 +1,7 @@
 #ifndef PLATFORM_H
 #define PLATFORM_H
 
+#include <stddef.h>
 #include <stdio.h>
 
 #include "status.h"
@@ -18,5 +19,14 @@ BbStatus platform_sync(FILE *f);
  * either the old or the new file, never a partial one.
  */
 BbStatus platform_replace_file(const char *source, const char *target);
+
+/* Fills `buf` with cryptographically secure random bytes from the operating system. */
+BbStatus platform_random_bytes(void *buf, size_t len);
+
+/*
+ * Turns echoing of typed characters on standard input off (enable = 0) or back on. Returns 1
+ * if the setting was changed, 0 if standard input is not an interactive terminal.
+ */
+int platform_stdin_echo(int enable);
 
 #endif /* PLATFORM_H */

@@ -1,5 +1,5 @@
 #if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
-#define _POSIX_C_SOURCE 200809L /* fileno, fsync, open */
+#define _POSIX_C_SOURCE 200809L /* fileno, fsync, open, termios */
 #endif
 
 #include "platform.h"
@@ -9,8 +9,11 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+/* windows.h must come first */
+#include <wincrypt.h>
 #else
 #include <fcntl.h>
+#include <termios.h>
 #include <unistd.h>
 #endif
 
@@ -71,4 +74,51 @@ BbStatus platform_replace_file(const char *source, const char *target) {
     sync_parent_dir(target);
 #endif
     return BB_OK;
+}
+
+BbStatus platform_random_bytes(void *buf, size_t len) {
+    if (!buf)
+        return BB_ERR_INVALID_ARG;
+#ifdef _WIN32
+    /* CryptGenRandom is available on every Windows version and every MinGW flavour. */
+    HCRYPTPROV provider;
+    if ((DWORD)len != len)
+        return BB_ERR_INVALID_ARG;
+    if (!CryptAcquireContextA(&provider, NULL, NULL, PROV_RSA_FULL,
+                              CRYPT_VERIFYCONTEXT | CRYPT_SILENT))
+        return BB_ERR_IO;
+    BOOL ok = CryptGenRandom(provider, (DWORD)len, buf);
+    CryptReleaseContext(provider, 0);
+    return ok ? BB_OK : BB_ERR_IO;
+#else
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (!f)
+        return BB_ERR_IO;
+    size_t got = fread(buf, 1, len, f);
+    fclose(f);
+    return got == len ? BB_OK : BB_ERR_IO;
+#endif
+}
+
+int platform_stdin_echo(int enable) {
+#ifdef _WIN32
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode;
+    if (in == INVALID_HANDLE_VALUE || !GetConsoleMode(in, &mode))
+        return 0;
+    if (enable)
+        mode |= ENABLE_ECHO_INPUT;
+    else
+        mode &= ~(DWORD)ENABLE_ECHO_INPUT;
+    return SetConsoleMode(in, mode) != 0;
+#else
+    struct termios t;
+    if (!isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &t) != 0)
+        return 0;
+    if (enable)
+        t.c_lflag |= ECHO;
+    else
+        t.c_lflag &= ~(tcflag_t)ECHO;
+    return tcsetattr(STDIN_FILENO, TCSANOW, &t) == 0;
+#endif
 }

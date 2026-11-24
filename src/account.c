@@ -41,16 +41,16 @@ void account_free_all(AccountList *list) {
     list->head = NULL;
 }
 
-Account *account_create(AccountList *list, const char *username, unsigned int pin_hash,
+Account *account_create(AccountList *list, const char *username, const char *pin_credential,
                         time_t now) {
-    if (!list || !username)
+    if (!list || !username || !pin_credential)
         return NULL;
     Account *acc = calloc(1, sizeof *acc);
     if (!acc)
         return NULL;
     acc->account_number = ++list->last_account_number;
     copy_string(acc->username, sizeof acc->username, username);
-    acc->pin_hash = pin_hash;
+    copy_string(acc->pin_credential, sizeof acc->pin_credential, pin_credential);
     acc->balance = 0;
     acc->created_at = now;
     acc->last_interest_applied = now;

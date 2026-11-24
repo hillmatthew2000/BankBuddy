@@ -10,6 +10,7 @@
  *   A|number|username|credential|balance|created|last_interest|failed_attempts|lock_until
  *   T|number|tx_id|type|amount|balance_after|timestamp|category
  *
+ * The credential is a salted PIN hash in one of the formats described in auth.h.
  * Amounts are decimal with two places ("1234.50"); times are Unix seconds. Each account line
  * is followed by its transactions, newest first. Saving writes a temporary file and renames it
  * over the old one, so a crash mid-save never leaves a half-written file behind.

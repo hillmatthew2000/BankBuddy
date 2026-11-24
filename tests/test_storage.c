@@ -4,6 +4,10 @@
 #include "check.h"
 #include "storage.h"
 
+#define PBKDF2_SAMPLE                                      \
+    "pbkdf2-sha256:1000:000102030405060708090a0b0c0d0e0f:" \
+    "2240ea2a22754a3c4610356ef8e4d7acf25af2ac3d2d11866de97a8b7812c52c"
+
 static void path_in(char *buf, size_t size, const char *name) {
     snprintf(buf, size, "%s/%s", test_temp_dir(), name);
 }
@@ -41,8 +45,8 @@ static void test_round_trip(void) {
     remove_files();
     AccountList list;
     account_list_init(&list);
-    Account *a = account_create(&list, "Mary-Jane O'Neil", 0xDEADBEEFu, 1700000000);
-    Account *b = account_create(&list, "bob", 42u, 1700000001);
+    Account *a = account_create(&list, "Mary-Jane O'Neil", "fnv1a:3735928559", 1700000000);
+    Account *b = account_create(&list, "bob", PBKDF2_SAMPLE, 1700000001);
     CHECK(a && b);
     if (!a || !b)
         return;
@@ -61,7 +65,7 @@ static void test_round_trip(void) {
     for (; x && y; x = x->next, y = y->next) {
         CHECK_INT_EQ(y->account_number, x->account_number);
         CHECK_STR_EQ(y->username, x->username);
-        CHECK_INT_EQ(y->pin_hash, x->pin_hash);
+        CHECK_STR_EQ(y->pin_credential, x->pin_credential);
         CHECK_INT_EQ(y->balance, x->balance);
         CHECK_INT_EQ(y->created_at, x->created_at);
         CHECK_INT_EQ(y->failed_attempts, x->failed_attempts);
@@ -114,7 +118,7 @@ static void test_legacy_migration(void) {
     CHECK(hill != NULL);
     if (hill) {
         CHECK_STR_EQ(hill->username, "hill");
-        CHECK_INT_EQ(hill->pin_hash, 2225039093u);
+        CHECK_STR_EQ(hill->pin_credential, "fnv1a:2225039093");
         CHECK_INT_EQ(hill->balance, 1001900);
         CHECK_INT_EQ(hill->next_tx_id, 4);
         CHECK(hill->tx_head && hill->tx_head->tx_id == 3);
@@ -166,6 +170,10 @@ static void test_damaged_files_are_refused(void) {
     snprintf(text, sizeof text,
              "BANKBUDDY 2\nA|100001|demo|fnv1a:4257489661|nan|1758143802|1758143802|0|0\n");
     expect_load_error(text, BB_ERR_CORRUPT, 2);
+
+    snprintf(text, sizeof text,
+             "BANKBUDDY 2\nA|100001|demo|pbkdf2-sha256:1:00:00|5.00|1758143802|1758143802|0|0\n");
+    expect_load_error(text, BB_ERR_CORRUPT, 2); /* malformed credential */
     remove_files();
 }
 

@@ -8,18 +8,29 @@
 #include "account.h"
 #include "auth.h"
 #include "interest.h"
+#include "platform.h"
 #include "report.h"
+#include "sha256.h"
 #include "storage.h"
 #include "validation.h"
 
 /* Set once stdin is exhausted; every menu then unwinds and the program exits. */
 static int input_closed = 0;
 
-/* Shows `label` and reads a line. Returns 1 with a usable line, 0 on EOF or over-long input. */
-static int prompt(const char *label, char *buf, size_t size) {
+/*
+ * Shows `label` and reads a line, without echoing it on a terminal if `secret`. Returns 1 with
+ * a usable line, 0 on EOF or over-long input.
+ */
+static int ask(const char *label, char *buf, size_t size, int secret) {
     printf("%s", label);
     fflush(stdout);
-    switch (read_line(stdin, buf, size)) {
+    int hidden = secret && platform_stdin_echo(0);
+    LineStatus status = read_line(stdin, buf, size);
+    if (hidden) {
+        platform_stdin_echo(1);
+        printf("\n"); /* the Enter key was not echoed either */
+    }
+    switch (status) {
         case LINE_OK:
             return 1;
         case LINE_TOO_LONG:
@@ -31,6 +42,14 @@ static int prompt(const char *label, char *buf, size_t size) {
     input_closed = 1;
     printf("\n");
     return 0;
+}
+
+static int prompt(const char *label, char *buf, size_t size) {
+    return ask(label, buf, size, 0);
+}
+
+static int prompt_secret(const char *label, char *buf, size_t size) {
+    return ask(label, buf, size, 1);
 }
 
 /*
@@ -59,9 +78,35 @@ static int save_or_warn(void) {
     return 0;
 }
 
+/* Asks for a new PIN twice and stores its credential in `out`. Returns 1 on success. */
+static int choose_pin(char *out, size_t size) {
+    char pin[PIN_MAX_LEN + 2], again[PIN_MAX_LEN + 2];
+    char label[48];
+    int ok = 0;
+    snprintf(label, sizeof label, "Choose a PIN (%d-%d digits): ", PIN_MIN_LEN, PIN_MAX_LEN);
+    if (!prompt_secret(label, pin, sizeof pin)) {
+        /* nothing usable was entered */
+    } else if (!validate_pin_format(pin)) {
+        printf("A PIN must be %d to %d digits.\n", PIN_MIN_LEN, PIN_MAX_LEN);
+    } else if (!prompt_secret("Repeat the PIN: ", again, sizeof again)) {
+        /* nothing usable was entered */
+    } else if (strcmp(pin, again) != 0) {
+        printf("The PINs do not match.\n");
+    } else {
+        BbStatus rc = pin_credential_create(pin, PIN_HASH_ITERATIONS, out, size);
+        if (rc == BB_OK)
+            ok = 1;
+        else
+            printf("Could not secure the PIN: %s.\n", bb_status_message(rc));
+    }
+    secure_zero(pin, sizeof pin);
+    secure_zero(again, sizeof again);
+    return ok;
+}
+
 static void create_account_flow(AccountList *list) {
     char user[USERNAME_MAX + 1];
-    char pin[PIN_MAX_LEN + 1];
+    char credential[PIN_CREDENTIAL_MAX + 1];
     if (!prompt("Enter username: ", user, sizeof user))
         return;
     if (validate_username(user) != BB_OK) {
@@ -70,16 +115,9 @@ static void create_account_flow(AccountList *list) {
                USERNAME_MAX);
         return;
     }
-    char label[48];
-    snprintf(label, sizeof label, "Enter PIN (%d-%d digits): ", PIN_MIN_LEN, PIN_MAX_LEN);
-    if (!prompt(label, pin, sizeof pin))
+    if (!choose_pin(credential, sizeof credential))
         return;
-    if (!validate_pin_format(pin)) {
-        printf("Invalid PIN format.\n");
-        return;
-    }
-    unsigned int h = hash_pin(pin);
-    Account *acc = account_create(list, user, h, time(NULL));
+    Account *acc = account_create(list, user, credential, time(NULL));
     if (!acc) {
         printf("Failed to create account.\n");
         return;
@@ -90,33 +128,36 @@ static void create_account_flow(AccountList *list) {
 
 static Account *login_flow(AccountList *list) {
     char buf[64];
-    char pin[PIN_MAX_LEN + 1];
-    if (!prompt("Enter account number: ", buf, sizeof buf))
+    char pin[PIN_MAX_LEN + 2];
+    if (!prompt("Enter account number: ", buf, sizeof buf) ||
+        !prompt_secret("Enter PIN: ", pin, sizeof pin))
         return NULL;
+    /* The same answer for an unknown account and a wrong PIN, after the same amount of work,
+     * so that nobody can find out which account numbers exist. */
     unsigned long acc_no;
-    if (!parse_ulong(buf, &acc_no)) {
-        printf("Invalid number.\n");
-        return NULL;
-    }
-    Account *acc = account_find(list, acc_no);
-    if (!acc) {
-        printf("No such account.\n");
-        return NULL;
-    }
+    Account *acc = parse_ulong(buf, &acc_no) ? account_find(list, acc_no) : NULL;
+    AuthResult result = AUTH_WRONG_PIN;
     time_t now = time(NULL);
-    if (acc->lock_until && now < acc->lock_until) {
-        printf("Account locked. Try later.\n");
-        return NULL;
+    if (acc) {
+        result = verify_pin(acc, pin, now);
+        save_or_warn(); /* the attempt counter, lockout and any re-hash must survive a restart */
+    } else {
+        auth_dummy_check(pin);
     }
-    if (!prompt("Enter PIN: ", pin, sizeof pin))
-        return NULL;
-    int ok = verify_pin(acc, pin, now);
-    save_or_warn(); /* the attempt counter and lockout must survive a restart */
-    if (ok) {
-        printf("Login successful. Welcome %s!\n", acc->username);
-        return acc;
+    secure_zero(pin, sizeof pin);
+
+    switch (result) {
+        case AUTH_OK:
+            printf("Login successful. Welcome %s!\n", acc->username);
+            return acc;
+        case AUTH_LOCKED:
+            printf("Too many failed attempts. Locked - try again in %ld seconds.\n",
+                   auth_lock_remaining(acc, now));
+            return NULL;
+        case AUTH_WRONG_PIN:
+            break;
     }
-    printf("Login failed.\n");
+    printf("Account number or PIN is incorrect.\n");
     return NULL;
 }
 

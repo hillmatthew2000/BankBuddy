@@ -13,7 +13,7 @@ static const CategorySummary *find(const CategorySummary *head, const char *name
 static void test_category_totals(void) {
     AccountList list;
     account_list_init(&list);
-    Account *acc = account_create(&list, "tester", 0, 100);
+    Account *acc = account_create(&list, "tester", "fnv1a:0", 100);
     CHECK(acc != NULL);
     if (!acc)
         return;
