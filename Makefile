@@ -1,7 +1,9 @@
 # BankBuddy build
 #
 #   make              build build/bankbuddy
-#   make test         build and run the test suite
+#   make test         build and run the unit tests and the end-to-end tests
+#   make unit-test    only the unit tests
+#   make e2e-test     only the end-to-end tests (scripted sessions with the real program)
 #   make run          build and start the app (data in the current directory)
 #   make format       reformat the sources with clang-format
 #   make format-check fail if any source is not formatted (used by CI)
@@ -56,7 +58,7 @@ LIB_OBJS := $(filter-out $(OBJDIR)/main.o,$(OBJS))
 TEST_SRCS := $(wildcard tests/*.c)
 TEST_OBJS := $(TEST_SRCS:tests/%.c=$(OBJDIR)/tests/%.o)
 
-.PHONY: all test run format format-check clean
+.PHONY: all test unit-test e2e-test run format format-check clean
 
 all: $(BIN)
 
@@ -66,10 +68,15 @@ $(BIN): $(OBJS)
 $(TEST_BIN): $(TEST_OBJS) $(LIB_OBJS)
 	$(CC) $(ALL_CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
-# The tests create and delete data files, so they get a directory of their own.
-test: $(TEST_BIN)
+test: unit-test e2e-test
+
+# The unit tests create and delete data files, so they get a directory of their own.
+unit-test: $(TEST_BIN)
 	mkdir -p $(TEST_DIR)
 	BANKBUDDY_TEST_DIR=$(TEST_DIR) ./$(TEST_BIN)
+
+e2e-test: $(BIN)
+	sh tests/e2e.sh $(BIN)
 
 $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
 	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
