@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: ${{ matrix.os }} / ${{ matrix.cc }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, cc: gcc }
+          - { os: ubuntu-latest, cc: clang }
+          - { os: macos-latest, cc: clang }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test with sanitizers
+        run: make CC=${{ matrix.cc }} WERROR=1 SANITIZE=1 all test
+      - name: Build and test optimised, without sanitizers
+        run: make clean && make CC=${{ matrix.cc }} WERROR=1 all test
+
+  windows:
+    name: windows / mingw-w64 gcc
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Check out with LF line endings
+        shell: pwsh
+        run: git config --global core.autocrlf input
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: make mingw-w64-ucrt-x86_64-gcc
+      - name: Build and test
+        run: make WERROR=1 all test
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install clang-format 18
+        run: python -m pip install clang-format==18.1.8
+      - name: Check formatting
+        run: make format-check
