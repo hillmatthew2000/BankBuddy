@@ -122,3 +122,21 @@ int platform_stdin_echo(int enable) {
     return tcsetattr(STDIN_FILENO, TCSANOW, &t) == 0;
 #endif
 }
+
+int platform_stdout_ansi(void) {
+#ifdef _WIN32
+#ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
+#define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004 /* missing from older SDK headers */
+#endif
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode;
+    if (out == INVALID_HANDLE_VALUE || !GetConsoleMode(out, &mode))
+        return 0; /* redirected to a file or pipe */
+    if (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+        return 1;
+    /* Fails on consoles older than Windows 10, which cannot show colours this way. */
+    return SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+#else
+    return isatty(STDOUT_FILENO);
+#endif
+}

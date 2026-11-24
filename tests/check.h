@@ -54,5 +54,6 @@ void suite_money(void);
 void suite_account(void);
 void suite_storage(void);
 void suite_sha256(void);
+void suite_term(void);
 
 #endif /* CHECK_H */

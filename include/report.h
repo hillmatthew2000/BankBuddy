@@ -20,6 +20,5 @@ typedef struct CategorySummary {
 CategorySummary *generate_category_report(const Account *acc, time_t start_time, time_t end_time,
                                           BbStatus *status);
 void free_category_summaries(CategorySummary *head);
-void print_category_report(const CategorySummary *head);
 
 #endif /* REPORT_H */

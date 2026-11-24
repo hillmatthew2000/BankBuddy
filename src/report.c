@@ -1,6 +1,5 @@
 #include "report.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -48,18 +47,6 @@ CategorySummary *generate_category_report(const Account *acc, time_t start_time,
             summary->debits += tx->amount;
     }
     return head;
-}
-
-void print_category_report(const CategorySummary *head) {
-    printf("%-20s %16s %16s %16s\n", "Category", "Credits", "Debits", "Net");
-    printf("-----------------------------------------------------------------------\n");
-    for (const CategorySummary *c = head; c; c = c->next) {
-        char credits[MONEY_STR_MAX], debits[MONEY_STR_MAX], net[MONEY_STR_MAX];
-        money_format(c->credits, credits, sizeof credits);
-        money_format(c->debits, debits, sizeof debits);
-        money_format(c->credits - c->debits, net, sizeof net);
-        printf("%-20s %16s %16s %16s\n", c->category, credits, debits, net);
-    }
 }
 
 void free_category_summaries(CategorySummary *head) {

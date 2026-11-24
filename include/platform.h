@@ -29,4 +29,10 @@ BbStatus platform_random_bytes(void *buf, size_t len);
  */
 int platform_stdin_echo(int enable);
 
+/*
+ * Returns 1 if standard output is a terminal that understands ANSI escape sequences, turning
+ * on their processing first where that is needed (Windows 10 consoles).
+ */
+int platform_stdout_ansi(void);
+
 #endif /* PLATFORM_H */

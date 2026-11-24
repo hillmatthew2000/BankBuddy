@@ -6,11 +6,13 @@
 #include "auth.h"
 #include "cli.h"
 #include "storage.h"
+#include "term.h"
 
 static void usage(FILE *out) {
-    fprintf(out, "Usage: bankbuddy [--data-dir DIR]\n"
+    fprintf(out, "Usage: bankbuddy [--data-dir DIR] [--no-color]\n"
                  "\n"
                  "  -d, --data-dir DIR   keep data in DIR (default: current directory)\n"
+                 "      --no-color       plain output (also when NO_COLOR is set)\n"
                  "  -h, --help           show this help\n");
 }
 
@@ -27,6 +29,7 @@ static void seed_demo(AccountList *list) {
 
 int main(int argc, char **argv) {
     const char *data_dir = ".";
+    int allow_color = 1;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             usage(stdout);
@@ -36,10 +39,16 @@ int main(int argc, char **argv) {
             data_dir = argv[++i];
             continue;
         }
+        if (strcmp(argv[i], "--no-color") == 0) {
+            allow_color = 0;
+            continue;
+        }
         fprintf(stderr, "bankbuddy: unknown or incomplete option '%s'\n\n", argv[i]);
         usage(stderr);
         return 2;
     }
+
+    term_init(allow_color);
 
     AccountList list;
     LoadReport report;
@@ -58,8 +67,8 @@ int main(int argc, char **argv) {
         printf("Converted data from %s and %s to %s. The old files were left in place.\n",
                LEGACY_ACCOUNTS, LEGACY_TRANSACTIONS, DATA_FILE);
         if (report.skipped_legacy)
-            printf("Warning: %lu unreadable line(s) in the old files were skipped.\n",
-                   report.skipped_legacy);
+            term_warning("%lu unreadable line(s) in the old files were skipped.",
+                         report.skipped_legacy);
         needs_save = 1;
     }
     if (!list.head) {
@@ -67,7 +76,7 @@ int main(int argc, char **argv) {
         needs_save = 1;
     }
     if (needs_save && (rc = storage_save(data_dir, &list)) != BB_OK)
-        fprintf(stderr, "Warning: could not save to %s: %s.\n", data_dir, bb_status_message(rc));
+        term_warning("could not save to %s: %s.", data_dir, bb_status_message(rc));
 
     main_menu(&list, data_dir);
     account_free_all(&list);
